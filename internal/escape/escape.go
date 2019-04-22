@@ -1,60 +1,18 @@
-package fileblob
+// Package escape includes helpers for escaping and unescaping strings.
+package escape
 
 import (
 	"fmt"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 )
 
-func escapeBlobKey(s string) string {
-	s = hexEscape(s, func(r []rune, i int) bool {
-		c := r[i]
-		switch {
-		case c < 32:
-			return true
-		// We're going to replace '/' with os.PathSeparator below. In order for this
-		// to be reversible, we need to escape raw os.PathSeparators.
-		case os.PathSeparator != '/' && c == os.PathSeparator:
-			return true
-		// For "../", escape the trailing slash.
-		case i > 1 && c == '/' && r[i-1] == '.' && r[i-2] == '.':
-			return true
-		// For "//", escape the trailing slash.
-		case i > 0 && c == '/' && r[i-1] == '/':
-			return true
-		// Escape the trailing slash in a key.
-		case c == '/' && i == len(r)-1:
-			return true
-		// https://docs.microsoft.com/en-us/windows/desktop/fileio/naming-a-file
-		case os.PathSeparator == '\\' && (c == '>' || c == '<' || c == ':' || c == '"' || c == '|' || c == '?' || c == '*'):
-			return true
-		}
-		return false
-	})
-	// Replace "/" with os.PathSeparator if needed, so that the local filesystem
-	// can use subdirectories.
-	if os.PathSeparator != '/' {
-		s = strings.Replace(s, "/", string(os.PathSeparator), -1)
-	}
-	return s
-}
-
-// unescapeKey reverses escapeKey.
-func unescapeBlobKey(s string) string {
-	if os.PathSeparator != '/' {
-		s = strings.Replace(s, string(os.PathSeparator), "/", -1)
-	}
-	s = hexUnescape(s)
-	return s
-}
-
 // NonUTF8String is a string for which utf8.ValidString returns false.
-const nonUTF8String = "\xbd\xb2"
+const NonUTF8String = "\xbd\xb2"
 
-// isASCIIAlphanumeric returns true iff r is alphanumeric: a-z, A-Z, 0-9.
-func isASCIIAlphanumeric(r rune) bool {
+// IsASCIIAlphanumeric returns true iff r is alphanumeric: a-z, A-Z, 0-9.
+func IsASCIIAlphanumeric(r rune) bool {
 	switch {
 	case 'A' <= r && r <= 'Z':
 		return true
@@ -66,7 +24,7 @@ func isASCIIAlphanumeric(r rune) bool {
 	return false
 }
 
-// hexEscape returns s, with all runes for which shouldEscape returns true
+// HexEscape returns s, with all runes for which shouldEscape returns true
 // escaped to "__0xXXX__", where XXX is the hex representation of the rune
 // value. For example, " " would escape to "__0x20__".
 //
@@ -81,7 +39,7 @@ func isASCIIAlphanumeric(r rune) bool {
 // We pass a slice of runes instead of the string or a slice of bytes
 // because some decisions will be made on a rune basis (e.g., encode
 // all non-ASCII runes).
-func hexEscape(s string, shouldEscape func(s []rune, i int) bool) string {
+func HexEscape(s string, shouldEscape func(s []rune, i int) bool) string {
 	// Do a first pass to see which runes (if any) need escaping.
 	runes := []rune(s)
 	var toEscape []int
@@ -158,8 +116,8 @@ func unescape(r []rune, i int) (bool, rune, int) {
 	return true, rune(retval), i
 }
 
-// hexUnescape reverses HexEscape.
-func hexUnescape(s string) string {
+// HexUnescape reverses HexEscape.
+func HexUnescape(s string) string {
 	var unescaped []rune
 	runes := []rune(s)
 	for i := 0; i < len(runes); i++ {
@@ -186,13 +144,13 @@ func hexUnescape(s string) string {
 }
 
 // URLEscape uses url.PathEscape to escape s.
-func urlEscape(s string) string {
+func URLEscape(s string) string {
 	return url.PathEscape(s)
 }
 
 // URLUnescape reverses URLEscape using url.PathUnescape. If the unescape
 // returns an error, it returns s.
-func urlUnescape(s string) string {
+func URLUnescape(s string) string {
 	if u, err := url.PathUnescape(s); err == nil {
 		return u
 	}
@@ -216,9 +174,9 @@ func makeASCIIString(start, end int) string {
 	return string(s)
 }
 
-// weirdStrings are unusual/weird strings for use in testing escaping.
+// WeirdStrings are unusual/weird strings for use in testing escaping.
 // The keys are descriptive strings, the values are the weird strings.
-var weirdStrings = map[string]string{
+var WeirdStrings = map[string]string{
 	"fwdslashes":          "foo/bar/baz",
 	"repeatedfwdslashes":  "foo//bar///baz",
 	"dotdotslash":         "../foo/../bar/../../baz../",

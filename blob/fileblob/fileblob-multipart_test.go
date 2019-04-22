@@ -3,22 +3,22 @@ package fileblob
 import (
 	"context"
 	"io/ioutil"
-	"os/user"
+	"os"
 	"testing"
 
 	"github.com/thatique/awan/blob/driver"
+	blobutil "github.com/thatique/awan/internal/blob"
 )
 
-func homeDir() string {
-	usr, err := user.Current()
-	if err != nil {
-		panic(err)
-	}
-	return usr.HomeDir
+func init() {
+	globalMinPartSize = 5
 }
 
 func TestCompleteMultipartUpload(t *testing.T) {
 	temp, err := ioutil.TempDir("", "filebblob-test")
+	defer func() {
+		os.RemoveAll(temp)
+	}()
 	objectName := "object"
 	if err != nil {
 		t.Fatalf("fatal creating temporary dir")
@@ -32,7 +32,7 @@ func TestCompleteMultipartUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal("Unexpected error creating new multipart writer", err)
 	}
-	w.Write([]byte([]byte("12345")))
+	w.Write([]byte(blobutil.GetSHA256Hash([]byte("012345"))))
 	p1, err := w.Close()
 	if err != nil {
 		t.Fatal("Unexpected error closing part 1", err)
@@ -42,7 +42,7 @@ func TestCompleteMultipartUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal("Unexpected error creating new multipart writer", err)
 	}
-	w.Write([]byte([]byte("67890")))
+	w.Write([]byte(blobutil.GetSHA256Hash([]byte("67890"))))
 	p2, err := w.Close()
 	if err != nil {
 		t.Fatal("Unexpected error closing part 2", err)

@@ -31,15 +31,15 @@ const (
 	// gcs.json version number
 	fsMultipartMetaCurrentVersion = "1"
 
-	// Minimum Part size for multipart upload is 5MiB
-	globalMinPartSize = 5 * humanize.MiByte
-
 	ReservedMetadataPrefix = "X-Fileblob-Internal-"
 )
 
 var (
 	// Invalid format.
 	errInvalidFormat = fmt.Errorf("Unknown format")
+
+	// Minimum Part size for multipart upload is 5MiB
+	globalMinPartSize = 5 * humanize.MiByte
 )
 
 type fileblobMultipartMetaV1 struct {
@@ -103,7 +103,7 @@ func getPartFile(entries []string, partNumber int, etag string) string {
 
 // Check if part size is more than or equal to minimum allowed size.
 func isMinAllowedPartSize(size int64) bool {
-	return size >= globalMinPartSize
+	return size >= int64(globalMinPartSize)
 }
 
 func (b *bucket) NewMultipartUpload(ctx context.Context, key, contentType string, opts *driver.WriterOptions) (string, error) {
@@ -243,14 +243,14 @@ func (b *bucket) CompleteMultipartUpload(ctx context.Context, key, uploadID stri
 			break
 		}
 
-		// // All parts except the last part has to be atleast 5MB.
-		// if !isMinAllowedPartSize(actualSize) {
-		// 	return nil, PartTooSmall{
-		// 		PartNumber: part.PartNumber,
-		// 		PartSize:   actualSize,
-		// 		PartETag:   part.ETag,
-		// 	}
-		// }
+		// All parts except the last part has to be atleast 5MB.
+		if !isMinAllowedPartSize(actualSize) {
+			return nil, PartTooSmall{
+				PartNumber: part.PartNumber,
+				PartSize:   actualSize,
+				PartETag:   part.ETag,
+			}
+		}
 	}
 
 	// We'll write the copy using Writer, to avoid re-implementing making of a

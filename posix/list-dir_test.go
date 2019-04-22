@@ -17,8 +17,8 @@ var globalTestTmpDir = os.TempDir()
 // Test to check for different input arguments.
 func TestReadDirFail(t *testing.T) {
 	// Check non existent directory.
-	if _, err := ReadDir("/tmp/non-existent-directory"); err != errFileNotFound {
-		t.Fatalf("expected = %s, got: %s", errFileNotFound, err)
+	if _, err := ReadDir("/tmp/non-existent-directory"); err != ErrFileNotFound {
+		t.Fatalf("expected = %s, got: %s", ErrFileNotFound, err)
 	}
 
 	file := path.Join(os.TempDir(), "issue")
@@ -28,8 +28,8 @@ func TestReadDirFail(t *testing.T) {
 	defer os.RemoveAll(file)
 
 	// Check if file is given.
-	if _, err := ReadDir(path.Join(file, "mydir")); err != errFileNotFound {
-		t.Fatalf("expected = %s, got: %s", errFileNotFound, err)
+	if _, err := ReadDir(path.Join(file, "mydir")); err != ErrFileNotFound {
+		t.Fatalf("expected = %s, got: %s", ErrFileNotFound, err)
 	}
 
 	// Only valid for linux.

@@ -15,6 +15,7 @@ import (
 
 	"github.com/thatique/awan/blob/driver"
 	blobutil "github.com/thatique/awan/internal/blob"
+	"github.com/thatique/awan/internal/escape"
 	"github.com/thatique/awan/verr"
 	"go.uber.org/atomic"
 )
@@ -51,6 +52,48 @@ func (b *bucket) ErrorCode(err error) verr.ErrorCode {
 	default:
 		return verr.Unknown
 	}
+}
+
+func escapeBlobKey(s string) string {
+	s = escape.HexEscape(s, func(r []rune, i int) bool {
+		c := r[i]
+		switch {
+		case c < 32:
+			return true
+		// We're going to replace '/' with os.PathSeparator below. In order for this
+		// to be reversible, we need to escape raw os.PathSeparators.
+		case os.PathSeparator != '/' && c == os.PathSeparator:
+			return true
+		// For "../", escape the trailing slash.
+		case i > 1 && c == '/' && r[i-1] == '.' && r[i-2] == '.':
+			return true
+		// For "//", escape the trailing slash.
+		case i > 0 && c == '/' && r[i-1] == '/':
+			return true
+		// Escape the trailing slash in a key.
+		case c == '/' && i == len(r)-1:
+			return true
+		// https://docs.microsoft.com/en-us/windows/desktop/fileio/naming-a-file
+		case os.PathSeparator == '\\' && (c == '>' || c == '<' || c == ':' || c == '"' || c == '|' || c == '?' || c == '*'):
+			return true
+		}
+		return false
+	})
+	// Replace "/" with os.PathSeparator if needed, so that the local filesystem
+	// can use subdirectories.
+	if os.PathSeparator != '/' {
+		s = strings.Replace(s, "/", string(os.PathSeparator), -1)
+	}
+	return s
+}
+
+// unescapeKey reverses escapeKey.
+func unescapeBlobKey(s string) string {
+	if os.PathSeparator != '/' {
+		s = strings.Replace(s, string(os.PathSeparator), "/", -1)
+	}
+	s = escape.HexUnescape(s)
+	return s
 }
 
 // path returns the full path for a key
