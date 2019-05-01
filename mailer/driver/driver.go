@@ -15,7 +15,9 @@ type WriterTo interface {
 
 // Transport provides functionality for sending email
 type Transport interface {
-	// Send send email to provided address
+	// Send send email to provided address, if connection lost when user call
+	// this, then the transport should reconnect if it can, otherwise return
+	// error.
 	Send(ctx context.Context, from string, to []string, msg WriterTo) error
 
 	// Close, close the connection. Once Close is called, there will be no method

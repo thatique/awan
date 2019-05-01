@@ -24,7 +24,7 @@ type xattrs struct {
 	ContentType        string                  `json:"user.content_type"`
 	Metadata           map[string]string       `json:"user.metadata"`
 	MD5                []byte                  `json:"md5"`
-	Etag               string                  `json:"etag"`
+	ETag               string                  `json:"etag"`
 	Parts              []driver.ObjectPartInfo `json:"parts,omitempty"`
 }
 

@@ -12,6 +12,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -140,6 +141,178 @@ func (b *bucket) AbortMultipartUpload(ctx context.Context, key, uploadID string)
 	os.Remove(filepath.Join(b.dir, getMultipartSHADir(key)))
 
 	return nil
+}
+
+func (b *bucket) ListMultipartUploads(ctx context.Context, key string, opts *driver.ListMultipartsOptions) (*driver.ListMultipartsInfo, error) {
+	result := &driver.ListMultipartsInfo{
+		MaxUploads:     opts.MaxUploads,
+		KeyMarker:      opts.KeyMarker,
+		Prefix:         key,
+		Delimiter:      opts.Delimiter,
+		NextKeyMarker:  key,
+		UploadIDMarker: opts.UploadIDMarker,
+	}
+	shaDir := getMultipartSHADir(key)
+	uploadIDs, err := posix.ReadDir(filepath.Join(b.dir, shaDir))
+	if err != nil {
+		if err == posix.ErrFileNotFound {
+			result.IsTruncated = false
+			return result, nil
+		}
+		return nil, err
+	}
+	var uploads []driver.MultipartInfo
+	for _, uploadID := range uploadIDs {
+		metaFilePath, err := b.path(filepath.Join(shaDir, uploadID, fsMultipartJSONFile))
+		if err != nil {
+			return nil, err
+		}
+		fi, err := os.Stat(metaFilePath)
+		if err != nil {
+			return nil, err
+		}
+		uploads = append(uploads, driver.MultipartInfo{
+			Key:       key,
+			UploadID:  strings.TrimSuffix(uploadID, "/"),
+			Initiated: fi.ModTime(),
+		})
+	}
+	sort.Slice(uploads, func(i int, j int) bool {
+		return uploads[i].Initiated.Before(uploads[j].Initiated)
+	})
+	uploadIndex := 0
+	if opts.UploadIDMarker != "" {
+		for uploadIndex < len(uploads) {
+			if uploads[uploadIndex].UploadID != opts.UploadIDMarker {
+				uploadIndex++
+				continue
+			}
+			if uploads[uploadIndex].UploadID == opts.UploadIDMarker {
+				uploadIndex++
+				break
+			}
+			uploadIndex++
+		}
+	}
+	for uploadIndex < len(uploads) {
+		result.Uploads = append(result.Uploads, uploads[uploadIndex])
+		result.NextUploadIDMarker = uploads[uploadIndex].UploadID
+		uploadIndex++
+		if len(result.Uploads) == opts.MaxUploads {
+			break
+		}
+	}
+	result.IsTruncated = uploadIndex < len(uploads)
+
+	if !result.IsTruncated {
+		result.NextKeyMarker = ""
+		result.NextUploadIDMarker = ""
+	}
+
+	return result, nil
+}
+
+func (b *bucket) ListObjectParts(ctx context.Context, key, uploadID string, opts *driver.ListPartsOptions) (*driver.ListPartsInfo, error) {
+	result := &driver.ListPartsInfo{
+		Key:              key,
+		UploadID:         uploadID,
+		MaxParts:         opts.MaxParts,
+		PartNumberMarker: opts.PartNumberMarker,
+	}
+
+	uploadIDDir := getUploadIDDir(key, uploadID)
+	fsMultipathFile, _, xa, err := b.forKey(filepath.Join(uploadID, fsMultipartJSONFile))
+	if err != nil {
+		return nil, err
+	}
+	entries, err := posix.ReadDir(filepath.Dir(fsMultipathFile))
+	if err != nil {
+		return nil, err
+	}
+
+	partsMap := make(map[int]string)
+	for _, entry := range entries {
+		if entry == fsMultipartJSONFile {
+			continue
+		}
+		if strings.HasSuffix(entry, attrsExt) {
+			continue
+		}
+		partNumber, etag1, _, derr := decodePartFile(entry)
+		// Skip part files whose name don't match expected format. These could be backend filesystem specific files.
+		if derr != nil {
+			continue
+		}
+		etag2, ok := partsMap[partNumber]
+		if !ok {
+			partsMap[partNumber] = etag1
+			continue
+		}
+		stat1, serr := os.Stat(filepath.Join(b.dir, uploadIDDir, getPartFile(entries, partNumber, etag1)))
+		if serr != nil {
+			return nil, serr
+		}
+		stat2, serr := os.Stat(filepath.Join(b.dir, uploadIDDir, getPartFile(entries, partNumber, etag2)))
+		if serr != nil {
+			return nil, serr
+		}
+		if stat1.ModTime().After(stat2.ModTime()) {
+			partsMap[partNumber] = etag1
+		}
+	}
+
+	var parts []driver.PartInfo
+	var actualSize int64
+	for partNumber, etag := range partsMap {
+		partFile := getPartFile(entries, partNumber, etag)
+		if partFile == "" {
+			return result, InvalidPart{}
+		}
+		// Read the actualSize from the pathFileName.
+		subParts := strings.Split(partFile, ".")
+		actualSize, err = strconv.ParseInt(subParts[len(subParts)-1], 10, 64)
+		if err != nil {
+			return result, InvalidPart{}
+		}
+		parts = append(parts, driver.PartInfo{PartNumber: partNumber, ETag: etag, ActualSize: actualSize})
+	}
+	sort.Slice(parts, func(i int, j int) bool {
+		return parts[i].PartNumber < parts[j].PartNumber
+	})
+	i := 0
+	if opts.PartNumberMarker != 0 {
+		// If the marker was set, skip the entries till the marker.
+		for _, part := range parts {
+			i++
+			if part.PartNumber == opts.PartNumberMarker {
+				break
+			}
+		}
+	}
+
+	partsCount := 0
+	for partsCount < opts.MaxParts && i < len(parts) {
+		result.Parts = append(result.Parts, parts[i])
+		i++
+		partsCount++
+	}
+	if i < len(parts) {
+		if partsCount != 0 {
+			result.NextPartNumberMarker = result.Parts[partsCount-1].PartNumber
+		}
+	}
+	for i, part := range result.Parts {
+		var stat os.FileInfo
+		stat, err = os.Stat(filepath.Join(b.dir, uploadIDDir, encodePartFile(part.PartNumber, part.ETag, uint64(part.ActualSize))))
+		if err != nil {
+			return result, err
+		}
+		result.Parts[i].LastModified = stat.ModTime()
+		result.Parts[i].Size = part.ActualSize
+	}
+	result.Metadata = xa.Metadata
+
+	return result, nil
 }
 
 func (b *bucket) CompleteMultipartUpload(ctx context.Context, key, uploadID string, parts []driver.CompletePart) (*driver.ObjectInfo, error) {
@@ -295,7 +468,7 @@ func (b *bucket) CompleteMultipartUpload(ctx context.Context, key, uploadID stri
 	if err != nil {
 		return nil, err
 	}
-	xa2.Etag = s3MD5
+	xa2.ETag = s3MD5
 	xa2.Parts = wattrs.Parts
 	if xa2.Metadata == nil {
 		xa2.Metadata = make(map[string]string)
@@ -454,9 +627,9 @@ func (w *multipartWriter) Close() (driver.PartInfo, error) {
 		}
 	}
 	w.attrs.MD5 = md5sum
-	w.attrs.Etag = hex.EncodeToString(md5sum)
+	w.attrs.ETag = hex.EncodeToString(md5sum)
 
-	path := filepath.Join(w.path, encodePartFile(w.partNumber, w.attrs.Etag, w.sizeWritten.Load()))
+	path := filepath.Join(w.path, encodePartFile(w.partNumber, w.attrs.ETag, w.sizeWritten.Load()))
 
 	// Write the attributes file.
 	if err = setAttrs(path, w.attrs); err != nil {
@@ -469,7 +642,7 @@ func (w *multipartWriter) Close() (driver.PartInfo, error) {
 	return driver.PartInfo{
 		PartNumber:   w.partNumber,
 		LastModified: time.Now(),
-		ETag:         w.attrs.Etag,
+		ETag:         w.attrs.ETag,
 		Size:         int64(w.sizeWritten.Load()),
 		ActualSize:   int64(w.sizeWritten.Load()),
 	}, nil

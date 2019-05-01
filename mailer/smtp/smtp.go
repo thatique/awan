@@ -16,6 +16,10 @@ import (
 )
 
 var (
+	// ErrAlreadyClosed the connection already closed
+	ErrAlreadyClosed = errors.New("mail.smtp: already closed")
+	// ErrConnNotEstablished returned when we can't establish a connection to
+	// smtp server
 	ErrConnNotEstablished = errors.New("mailer.smtp: connection to smtp server not establish")
 )
 
@@ -67,6 +71,7 @@ type Options struct {
 type smtpTransport struct {
 	locker sync.Mutex
 	conn   *smtp.Client
+	closed bool
 	option *Options
 
 	serverName string
@@ -78,9 +83,6 @@ func newSMTPTransport(option *Options) (*smtpTransport, error) {
 	t := &smtpTransport{
 		option:     option,
 		serverName: host,
-	}
-	if err := t.open(); err != nil {
-		return nil, err
 	}
 	return t, nil
 }
@@ -102,8 +104,12 @@ func (t *smtpTransport) send(from string, to []string, msg driver.WriterTo) (err
 	t.locker.Lock()
 	defer t.locker.Unlock()
 
-	if t.conn == nil {
-		return ErrConnNotEstablished
+	if t.closed {
+		return ErrAlreadyClosed
+	}
+
+	if err = t.open(); err != nil {
+		return
 	}
 
 	if err = t.conn.Mail(from); err != nil {
@@ -132,7 +138,11 @@ func (t *smtpTransport) send(from string, to []string, msg driver.WriterTo) (err
 func (t *smtpTransport) Close() error {
 	t.locker.Lock()
 	defer t.locker.Unlock()
+	t.closed = true
+	return t.closeSMTPConnection()
+}
 
+func (t *smtpTransport) closeSMTPConnection() error {
 	if t.conn == nil {
 		return nil
 	}
@@ -143,13 +153,6 @@ func (t *smtpTransport) Close() error {
 }
 
 func (t *smtpTransport) open() error {
-	t.locker.Lock()
-	defer t.locker.Unlock()
-
-	if t.conn != nil {
-		return nil
-	}
-
 	c, err := smtp.Dial(t.option.Addr)
 	if err != nil {
 		return err

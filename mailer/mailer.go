@@ -110,6 +110,9 @@ func (t *Transport) Close() (err error) {
 }
 
 func wrapError(t *Transport, err error) error {
+	if err == nil {
+		return nil
+	}
 	if verr.DoNotWrap(err) {
 		return err
 	}

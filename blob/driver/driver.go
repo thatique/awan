@@ -88,7 +88,7 @@ type Bucket interface {
 	CompleteMultipartUpload(ctx context.Context, key, uploadID string, uploadedParts []CompletePart) (objInfo *ObjectInfo, err error)
 
 	// ListMultipartUploads list all incomplete multipart uploads
-	ListMultipartUploads(ctx context.Context, opts *ListMultipartsOptions) (*ListMultipartsInfo, error)
+	ListMultipartUploads(ctx context.Context, key string, opts *ListMultipartsOptions) (*ListMultipartsInfo, error)
 
 	// Uploads a part by copying data from an existing object as data source.
 	CopyObjectPart(ctx context.Context, dstKey, srcKey, uploadID string, partNumber int, opts *CopyOptions) error
@@ -97,7 +97,7 @@ type Bucket interface {
 	NewMultipartWriter(ctx context.Context, key, uploadID string, partID int, opts *WriterOptions) (MultipartWriter, error)
 
 	// ListObjectParts
-	ListObjectParts(ctx context.Context, opts *ListPartsOptions) (*ListPartsInfo, error)
+	ListObjectParts(ctx context.Context, key, uploadID string, opts *ListPartsOptions) (*ListPartsInfo, error)
 
 	// Close cleans up any resources used by the Bucket. Once Close is called,
 	// there will be no method calls to the Bucket other than As, ErrorAs, and
@@ -208,8 +208,8 @@ type Attributes struct {
 	Size int64
 	// MD5 is an MD5 hash of the blob contents or nil if not available.
 	MD5 []byte
-	// Etag is the HTTP/1.1 Entity tag for the object. This field is readonly
-	Etag string
+	// ETag is the HTTP/1.1 Entity tag for the object. This field is readonly
+	ETag string
 	// List of individual parts, maximum size of upto 10,000
 	Parts []ObjectPartInfo
 }
@@ -279,17 +279,15 @@ type ListObjectsInfo struct {
 // ObjectPartInfo Info of each part kept in the multipart metadata
 // file after CompleteMultipartUpload() is called.
 type ObjectPartInfo struct {
-	Number     int    `json:"number"`
-	Name       string `json:"name"`
-	ETag       string `json:"etag"`
-	Size       int64  `json:"size"`
-	ActualSize int64  `json:"actualSize"`
+	Number     int
+	Name       string
+	ETag       string
+	Size       int64
+	ActualSize int64
 }
 
 // ListPartsOptions is option for listing ListPartsInfo
 type ListPartsOptions struct {
-	Key              string
-	UploadID         string
 	PartNumberMarker int
 	MaxParts         int
 }
@@ -323,7 +321,6 @@ type ListPartsInfo struct {
 
 // ListMultipartsOptions - is option to list all incomplete multipart uploads
 type ListMultipartsOptions struct {
-	Prefix         string
 	KeyMarker      string
 	UploadIDMarker string
 	Delimiter      string

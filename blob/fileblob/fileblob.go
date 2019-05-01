@@ -1,7 +1,6 @@
 package fileblob
 
 import (
-	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/hex"
@@ -17,7 +16,6 @@ import (
 	blobutil "github.com/thatique/awan/internal/blob"
 	"github.com/thatique/awan/internal/escape"
 	"github.com/thatique/awan/verr"
-	"go.uber.org/atomic"
 )
 
 const (
@@ -39,6 +37,8 @@ type Options struct {
 	// URLSigner is only required for utilizing the SignedURL API.
 	URLSigner URLSigner
 }
+
+var _ driver.Bucket = &bucket{}
 
 type bucket struct {
 	dir  string
@@ -192,7 +192,7 @@ func (b *bucket) ListPaged(ctx context.Context, opts *driver.ListOptions) (*driv
 			// Note: we only have the MD5 hash for blobs that we wrote.
 			// For other blobs, md5 will remain nil.
 			md5 = xa.MD5
-			etag = xa.Etag
+			etag = xa.ETag
 		}
 		obj := &driver.ObjectInfo{
 			Key:     key,
@@ -256,7 +256,7 @@ func (b *bucket) Attributes(ctx context.Context, key string) (driver.Attributes,
 		ModTime:            info.ModTime(),
 		Size:               info.Size(),
 		MD5:                xa.MD5,
-		Etag:               xa.Etag,
+		ETag:               xa.ETag,
 		Parts:              xa.Parts,
 	}, nil
 }
@@ -358,8 +358,7 @@ type writer struct {
 	contentMD5 []byte
 	// We compute the MD5 hash so that we can store it with the file attributes,
 	// not for verification.
-	md5hash     hash.Hash
-	sizeWritten atomic.Uint64
+	md5hash hash.Hash
 }
 
 func (w *writer) Write(p []byte) (n int, err error) {
@@ -386,16 +385,8 @@ func (w *writer) Close() error {
 	}
 
 	md5sum := w.md5hash.Sum(nil)
-	if len(w.contentMD5) > 0 {
-		if !bytes.Equal(md5sum, w.contentMD5) {
-			return &BadDigest{
-				ExpectedMD5:   hex.EncodeToString(w.contentMD5),
-				CalculatedMD5: hex.EncodeToString(md5sum),
-			}
-		}
-	}
 	w.attrs.MD5 = md5sum
-	w.attrs.Etag = blobutil.ToS3ETag(hex.EncodeToString(md5sum))
+	w.attrs.ETag = blobutil.ToS3ETag(hex.EncodeToString(md5sum))
 
 	// Write the attributes file.
 	if err := setAttrs(w.path, w.attrs); err != nil {
