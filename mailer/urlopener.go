@@ -20,7 +20,7 @@ type TransportURLOpener interface {
 //
 // The zero value is a multiplexer with no registered schemes.
 type URLMux struct {
-	schemes openurl.SchemaMap
+	schemes openurl.SchemeMap
 }
 
 // RegisterTransport registers the opener with the given scheme. If an opener

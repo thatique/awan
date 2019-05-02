@@ -5,13 +5,16 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"hash"
 	"io"
 	"io/ioutil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/thatique/awan/blob"
 	"github.com/thatique/awan/blob/driver"
 	blobutil "github.com/thatique/awan/internal/blob"
 	"github.com/thatique/awan/internal/escape"
@@ -27,7 +30,44 @@ const (
 
 	// defaultPagesize returned when listing object
 	defaultPageSize = 1000
+
+	Scheme = "file"
 )
+
+func init() {
+	blob.DefaultURLMux().RegisterBucket(Scheme, &URLOpener{})
+}
+
+// URLOpener opens file bucket URLs like "file:///foo/bar/baz".
+//
+// The URL's host is ignored.
+//
+// If os.PathSeparator != "/", any leading "/" from the path is dropped
+// and remaining '/' characters are converted to os.PathSeparator.
+//
+// No query options are supported. Examples:
+//
+//  - file:///a/directory
+//    -> Passes "/a/directory" to OpenBucket.
+//  - file://localhost/a/directory
+//    -> Also passes "/a/directory".
+//  - file:///c:/foo/bar on Windows.
+//    -> Passes "c:\foo\bar".
+//  - file://localhost/c:/foo/bar on Windows.
+//    -> Also passes "c:\foo\bar".
+type URLOpener struct{}
+
+// OpenBucketURL opens a blob.Bucket based on u.
+func (*URLOpener) OpenBucketURL(ctx context.Context, u *url.URL) (*blob.Bucket, error) {
+	for param := range u.Query() {
+		return nil, fmt.Errorf("open bucket %v: invalid query parameter %q", u, param)
+	}
+	path := u.Path
+	if os.PathSeparator != '/' {
+		path = strings.TrimPrefix(path, "/")
+	}
+	return OpenBucket(filepath.FromSlash(path), nil)
+}
 
 // Options sets options for constructing a *blob.Bucket backed by fileblob.
 type Options struct {
@@ -43,6 +83,33 @@ var _ driver.Bucket = &bucket{}
 type bucket struct {
 	dir  string
 	opts *Options
+}
+
+// openBucket creates a driver.Bucket that reads and writes to dir.
+// dir must exist.
+func openBucket(dir string, opts *Options) (driver.Bucket, error) {
+	dir = filepath.Clean(dir)
+	info, err := os.Stat(dir)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%s is not a directory", dir)
+	}
+	if opts == nil {
+		opts = &Options{}
+	}
+	return &bucket{dir: dir, opts: opts}, nil
+}
+
+// OpenBucket creates a *blob.Bucket backed by the filesystem and rooted at
+// dir, which must exist. See the package documentation for an example.
+func OpenBucket(dir string, opts *Options) (*blob.Bucket, error) {
+	drv, err := openBucket(dir, opts)
+	if err != nil {
+		return nil, err
+	}
+	return blob.NewBucket(drv), nil
 }
 
 func (b *bucket) ErrorCode(err error) verr.ErrorCode {
@@ -199,7 +266,7 @@ func (b *bucket) ListPaged(ctx context.Context, opts *driver.ListOptions) (*driv
 			ModTime: info.ModTime(),
 			Size:    info.Size(),
 			MD5:     md5,
-			Etag:    etag,
+			ETag:    etag,
 		}
 		// If using Delimiter, collapse "directories".
 		if opts.Delimiter != "" {

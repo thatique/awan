@@ -250,8 +250,8 @@ type ObjectInfo struct {
 	Size int64
 	// MD5 is an MD5 hash of the blob contents or nil if not available.
 	MD5 []byte
-	// Etag is the HTTP/1.1 Entity tag for the object. This field is readonly
-	Etag string
+	// ETag is the HTTP/1.1 Entity tag for the object. This field is readonly
+	ETag string
 	// IsDir indicates that this result represents a "directory" in the
 	// hierarchical namespace, ending in ListOptions.Delimiter. Key can be
 	// passed as ListOptions.Prefix to list items in the "directory".

@@ -23,7 +23,7 @@ func TestSchemeMap(t *testing.T) {
 		{"api+typ+bar://a", true, nil},
 	}
 
-	var emptyM, m SchemaMap
+	var emptyM, m SchemeMap
 	m.Register("api", "Type", "foo", foo)
 	m.Register("api", "Type", "bar", bar)
 

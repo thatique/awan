@@ -248,6 +248,9 @@ type ListOptions struct {
 	// ListObject fields. These results represent "directories". Multiple results
 	// in a "directory" are returned as a single result.
 	Delimiter string
+	// PageToken may be filled in with the NextPageToken from a previous
+	// ListPaged call.
+	PageToken []byte
 }
 
 // ListIterator iterates over List results.
@@ -409,6 +412,7 @@ func (b *Bucket) List(opts *ListOptions) *ListIterator {
 	dopts := &driver.ListOptions{
 		Prefix:    opts.Prefix,
 		Delimiter: opts.Delimiter,
+		PageToken: opts.PageToken,
 	}
 	return &ListIterator{b: b, opts: dopts}
 }

@@ -489,7 +489,7 @@ func (b *bucket) CompleteMultipartUpload(ctx context.Context, key, uploadID stri
 		ModTime: finfo.ModTime(),
 		Size:    finfo.Size(),
 		MD5:     xa2.MD5,
-		Etag:    s3MD5,
+		ETag:    s3MD5,
 		IsDir:   false,
 	}, nil
 }
