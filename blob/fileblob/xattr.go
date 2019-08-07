@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-
-	"github.com/thatique/awan/blob/driver"
 )
 
 const attrsExt = ".attrs"
@@ -25,7 +23,6 @@ type xattrs struct {
 	Metadata           map[string]string       `json:"user.metadata"`
 	MD5                []byte                  `json:"md5"`
 	ETag               string                  `json:"etag"`
-	Parts              []driver.ObjectPartInfo `json:"parts,omitempty"`
 }
 
 // setAttrs creates a "path.attrs" file along with blob to store the attributes,

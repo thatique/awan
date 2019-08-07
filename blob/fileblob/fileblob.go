@@ -25,9 +25,6 @@ const (
 	// fileBlobSysTmp prefix is for save metadata sent by Initialize Multipart Upload API.
 	fileBlobSysTmp = "fileblob.sys.tmp"
 
-	// multipart meta
-	multipartDirTmp = fileBlobSysTmp + "/multipart"
-
 	// defaultPagesize returned when listing object
 	defaultPageSize = 1000
 
@@ -189,7 +186,7 @@ func (b *bucket) forKey(key string) (string, os.FileInfo, *xattrs, error) {
 	return path, info, &xa, nil
 }
 
-func (b *bucket) ListPaged(ctx context.Context, opts *driver.ListOptions) (*driver.ListObjectsInfo, error) {
+func (b *bucket) ListPaged(ctx context.Context, opts *driver.ListOptions) (*driver.ListPage, error) {
 	var pageToken string
 	if len(opts.PageToken) > 0 {
 		pageToken = string(opts.PageToken)
@@ -205,7 +202,7 @@ func (b *bucket) ListPaged(ctx context.Context, opts *driver.ListOptions) (*driv
 	var lastPrefix string
 
 	// Do a full recursive scan of the root directory.
-	var result driver.ListObjectsInfo
+	var result driver.ListPage
 	err := filepath.Walk(b.dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			// Couldn't read this file/directory for some reason; just skip it.
@@ -261,7 +258,7 @@ func (b *bucket) ListPaged(ctx context.Context, opts *driver.ListOptions) (*driv
 			md5 = xa.MD5
 			etag = xa.ETag
 		}
-		obj := &driver.ObjectInfo{
+		obj := &driver.ListObject{
 			Key:     key,
 			ModTime: info.ModTime(),
 			Size:    info.Size(),
@@ -283,7 +280,7 @@ func (b *bucket) ListPaged(ctx context.Context, opts *driver.ListOptions) (*driv
 					return nil
 				}
 				// Update the object to be a "directory".
-				obj = &driver.ObjectInfo{
+				obj = &driver.ListObject{
 					Key:   prefix,
 					IsDir: true,
 				}
@@ -308,12 +305,12 @@ func (b *bucket) ListPaged(ctx context.Context, opts *driver.ListOptions) (*driv
 	return &result, nil
 }
 
-func (b *bucket) Attributes(ctx context.Context, key string) (driver.Attributes, error) {
+func (b *bucket) Attributes(ctx context.Context, key string) (*driver.Attributes, error) {
 	_, info, xa, err := b.forKey(key)
 	if err != nil {
-		return driver.Attributes{}, err
+		return &driver.Attributes{}, err
 	}
-	return driver.Attributes{
+	return &driver.Attributes{
 		CacheControl:       xa.CacheControl,
 		ContentDisposition: xa.ContentDisposition,
 		ContentEncoding:    xa.ContentEncoding,
@@ -324,7 +321,6 @@ func (b *bucket) Attributes(ctx context.Context, key string) (driver.Attributes,
 		Size:               info.Size(),
 		MD5:                xa.MD5,
 		ETag:               xa.ETag,
-		Parts:              xa.Parts,
 	}, nil
 }
 
@@ -349,7 +345,7 @@ func (b *bucket) NewRangeReader(ctx context.Context, key string, offset, length 
 	return &reader{
 		r: r,
 		c: f,
-		attrs: driver.ReaderAttributes{
+		attrs: &driver.ReaderAttributes{
 			ContentType: xa.ContentType,
 			ModTime:     info.ModTime(),
 			Size:        info.Size(),
@@ -360,7 +356,7 @@ func (b *bucket) NewRangeReader(ctx context.Context, key string, offset, length 
 type reader struct {
 	r     io.Reader
 	c     io.Closer
-	attrs driver.ReaderAttributes
+	attrs *driver.ReaderAttributes
 }
 
 func (r *reader) Read(p []byte) (int, error) {
@@ -377,7 +373,7 @@ func (r *reader) Close() error {
 	return r.c.Close()
 }
 
-func (r *reader) Attributes() driver.ReaderAttributes {
+func (r *reader) Attributes() *driver.ReaderAttributes {
 	return r.attrs
 }
 

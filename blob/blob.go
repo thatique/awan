@@ -99,18 +99,6 @@ type Attributes struct {
 	MD5 []byte
 	// Etag is the HTTP/1.1 Entity tag for the object. This field is readonly
 	ETag string
-	// List of individual parts, maximum size of upto 10,000
-	Parts []ObjectPartInfo
-}
-
-// ObjectPartInfo Info of each part kept in the multipart metadata
-// file after CompleteMultipartUpload() is called.
-type ObjectPartInfo struct {
-	Number     int
-	Name       string
-	ETag       string
-	Size       int64
-	ActualSize int64
 }
 
 // Writer writes bytes to a blob.
@@ -257,7 +245,7 @@ type ListOptions struct {
 type ListIterator struct {
 	b       *Bucket
 	opts    *driver.ListOptions
-	page    *driver.ListObjectsInfo
+	page    *driver.ListPage
 	nextIdx int
 }
 
@@ -272,7 +260,7 @@ type ObjectInfo struct {
 	// MD5 is an MD5 hash of the blob contents or nil if not available.
 	MD5 []byte
 	// Etag is the HTTP/1.1 Entity tag for the object. This field is readonly
-	Etag string
+	ETag string
 	// IsDir indicates that this result represents a "directory" in the
 	// hierarchical namespace, ending in ListOptions.Delimiter. Key can be
 	// passed as ListOptions.Prefix to list items in the "directory".
@@ -294,6 +282,7 @@ func (i *ListIterator) Next(ctx context.Context) (*ObjectInfo, error) {
 				ModTime: dobj.ModTime,
 				Size:    dobj.Size,
 				MD5:     dobj.MD5,
+				ETag:    dobj.ETag,
 				IsDir:   dobj.IsDir,
 			}, nil
 		}
@@ -436,22 +425,22 @@ func (b *Bucket) Exists(ctx context.Context, key string) (bool, error) {
 //
 // If the blob does not exist, Attributes returns an error for which
 // gcerrors.Code will return gcerrors.NotFound.
-func (b *Bucket) Attributes(ctx context.Context, key string) (_ Attributes, err error) {
+func (b *Bucket) Attributes(ctx context.Context, key string) (_ *Attributes, err error) {
 	if !utf8.ValidString(key) {
-		return Attributes{}, verr.Newf(verr.InvalidArgument, nil, "blob: Attributes key must be a valid UTF-8 string: %q", key)
+		return &Attributes{}, verr.Newf(verr.InvalidArgument, nil, "blob: Attributes key must be a valid UTF-8 string: %q", key)
 	}
 
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	if b.closed {
-		return Attributes{}, errClosed
+		return &Attributes{}, errClosed
 	}
 	ctx = b.tracer.Start(ctx, "Attributes")
 	defer func() { b.tracer.End(ctx, err) }()
 
 	a, err := b.b.Attributes(ctx, key)
 	if err != nil {
-		return Attributes{}, wrapError(b.b, err)
+		return &Attributes{}, wrapError(b.b, err)
 	}
 	var md map[string]string
 	if len(a.Metadata) > 0 {
@@ -463,11 +452,8 @@ func (b *Bucket) Attributes(ctx context.Context, key string) (_ Attributes, err 
 			md[strings.ToLower(k)] = v
 		}
 	}
-	var parts []ObjectPartInfo
-	for _, part := range a.Parts {
-		parts = append(parts, partInfoFromDriver(part))
-	}
-	return Attributes{
+
+	return &Attributes{
 		CacheControl:       a.CacheControl,
 		ContentDisposition: a.ContentDisposition,
 		ContentEncoding:    a.ContentEncoding,
@@ -478,7 +464,6 @@ func (b *Bucket) Attributes(ctx context.Context, key string) (_ Attributes, err 
 		Size:               a.Size,
 		MD5:                a.MD5,
 		ETag:               a.ETag,
-		Parts:              parts,
 	}, nil
 }
 
@@ -836,16 +821,6 @@ type WriterOptions struct {
 	// Duplicate case-insensitive keys (e.g., "foo" and "FOO") will result in
 	// an error.
 	Metadata map[string]string
-}
-
-func partInfoFromDriver(part driver.ObjectPartInfo) ObjectPartInfo {
-	return ObjectPartInfo{
-		Number:     part.Number,
-		Name:       part.Name,
-		ETag:       part.ETag,
-		Size:       part.Size,
-		ActualSize: part.ActualSize,
-	}
 }
 
 func wrapError(b driver.Bucket, err error) error {
