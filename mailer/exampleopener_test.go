@@ -4,17 +4,22 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/smtp"
 	"strings"
 
 	"github.com/emersion/go-message"
 	"github.com/thatique/awan/mailer"
 	_ "github.com/thatique/awan/mailer/smtp"
+
+	"github.com/ory/dockertest"
 )
 
 func ExampleOpenTransport() {
+	cleanup, host := prepareSMTPServer()
+	defer cleanup()
+
 	ctx := context.Background()
-	// use mailhog or python's smtp debugging server on port 1025
-	transport, err := mailer.OpenTransport(ctx, "smtp://foo:secrets@localhost:1025")
+	transport, err := mailer.OpenTransport(ctx, fmt.Sprintf("smtp://foo:secrets@%s", host))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -45,4 +50,36 @@ func ExampleOpenTransport() {
 	fmt.Printf("email sent")
 	// Output:
 	// email sent
+}
+
+func prepareSMTPServer() (func(), string) {
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	resource, err := pool.Run("mailhog/mailhog", "v1.0.0", []string{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	cleanup := func() {
+		pool.Purge(resource)
+	}
+	setup := func() error {
+		c, err := smtp.Dial("localhost:1025")
+		if err != nil {
+			return err
+		}
+		if err = c.Hello("localhost"); err != nil {
+			return err
+		}
+
+		return c.Quit()
+	}
+
+	if pool.Retry(setup); err != nil {
+		cleanup()
+		log.Fatal(err)
+	}
+	return cleanup, fmt.Sprintf("127.0.0.1:%s", resource.GetPort("1025/tcp"))
 }

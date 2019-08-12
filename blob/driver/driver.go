@@ -12,12 +12,6 @@ import (
 
 // ReaderOptions controls Reader behaviors.
 type ReaderOptions struct {
-	// BeforeRead is a callback that must be called exactly once before
-	// any data is read, unless NewRangeReader returns an error before then, in
-	// which case it should not be called at all.
-	// asFunc allows drivers to expose driver-specific types;
-	// see Bucket.As for more details.
-	BeforeRead func(asFunc func(interface{}) bool) error
 }
 
 // Reader reads an object from the blob.
@@ -64,20 +58,10 @@ type WriterOptions struct {
 	// Metadata holds key/value strings to be associated with the blob.
 	// Keys are guaranteed to be non-empty and lowercased.
 	Metadata map[string]string
-	// BeforeWrite is a callback that must be called exactly once before
-	// any data is written, unless NewTypedWriter returns an error, in
-	// which case it should not be called.
-	// asFunc allows drivers to expose driver-specific types;
-	// see Bucket.As for more details.
-	BeforeWrite func(asFunc func(interface{}) bool) error
 }
 
 // CopyOptions controls options for Copy.
 type CopyOptions struct {
-	// BeforeCopy is a callback that must be called before initiating the Copy.
-	// asFunc allows drivers to expose driver-specific types;
-	// see Bucket.As for more details.
-	BeforeCopy func(asFunc func(interface{}) bool) error
 }
 
 // ReaderAttributes contains a subset of attributes about a blob that are

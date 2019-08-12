@@ -112,6 +112,9 @@ func (t *smtpTransport) send(from string, to []string, msg driver.WriterTo) (err
 		return
 	}
 
+	// close connection after this
+	defer t.closeSMTPConnection()
+
 	if err = t.conn.Mail(from); err != nil {
 		return err
 	}
@@ -123,6 +126,8 @@ func (t *smtpTransport) send(from string, to []string, msg driver.WriterTo) (err
 	}
 
 	w, err := t.conn.Data()
+	defer w.Close()
+
 	if err != nil {
 		return err
 	}
