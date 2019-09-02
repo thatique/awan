@@ -102,7 +102,11 @@ func (t *smtpTransport) Send(ctx context.Context, from string, to []string, msg 
 
 func (t *smtpTransport) send(from string, to []string, msg driver.WriterTo) (err error) {
 	t.locker.Lock()
-	defer t.locker.Unlock()
+	defer func() {
+		// close connection after this
+		t.closeSMTPConnection()
+		t.locker.Unlock()
+	}()
 
 	if t.closed {
 		return ErrAlreadyClosed
@@ -111,9 +115,6 @@ func (t *smtpTransport) send(from string, to []string, msg driver.WriterTo) (err
 	if err = t.open(); err != nil {
 		return
 	}
-
-	// close connection after this
-	defer t.closeSMTPConnection()
 
 	if err = t.conn.Mail(from); err != nil {
 		return err
@@ -126,7 +127,6 @@ func (t *smtpTransport) send(from string, to []string, msg driver.WriterTo) (err
 	}
 
 	w, err := t.conn.Data()
-	defer w.Close()
 
 	if err != nil {
 		return err
