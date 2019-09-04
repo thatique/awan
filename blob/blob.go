@@ -716,7 +716,7 @@ func (b *Bucket) Delete(ctx context.Context, key string) (err error) {
 //
 // It is valid to call SignedURL for a key that does not exist.
 //
-// If the provider implementation does not support this functionality, SignedURL
+// If the driver does not support this functionality, SignedURL
 // will return an error for which gcerrors.Code will return gcerrors.Unimplemented.
 func (b *Bucket) SignedURL(ctx context.Context, key string, opts *SignedURLOptions) (string, error) {
 	if !utf8.ValidString(key) {
@@ -731,8 +731,19 @@ func (b *Bucket) SignedURL(ctx context.Context, key string, opts *SignedURLOptio
 	if opts.Expiry == 0 {
 		opts.Expiry = DefaultSignedURLExpiry
 	}
+	if opts.Method == "" {
+		opts.Method = http.MethodGet
+	}
+	switch opts.Method {
+	case http.MethodGet:
+	case http.MethodPut:
+	case http.MethodDelete:
+	default:
+		return "", fmt.Errorf("unsupported SignedURLOptions.Method %q", opts.Method)
+	}
 	dopts := driver.SignedURLOptions{
 		Expiry: opts.Expiry,
+		Method: opts.Method,
 	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -763,6 +774,9 @@ type SignedURLOptions struct {
 	// Expiry sets how long the returned URL is valid for.
 	// Defaults to DefaultSignedURLExpiry.
 	Expiry time.Duration
+	// Method is the HTTP method that can be used on the URL; one of "GET", "PUT",
+	// or "DELETE". Defaults to "GET".
+	Method string
 }
 
 // ReaderOptions sets options for NewReader and NewRangedReader.

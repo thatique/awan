@@ -2,6 +2,7 @@ package fileblob
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -51,6 +52,7 @@ func (h *harness) serveSignedURL(w http.ResponseWriter, r *http.Request) {
 	objKey, err := h.urlSigner.KeyFromURL(r.Context(), r.URL)
 	if err != nil {
 		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("error with objKey"))
 		return
 	}
 
@@ -60,6 +62,7 @@ func (h *harness) serveSignedURL(w http.ResponseWriter, r *http.Request) {
 	}
 	if allowedMethod != r.Method {
 		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(fmt.Sprintf("allowedMethod: %s != request method: %s. %s", allowedMethod, r.Method, r.URL.Query().Encode())))
 		return
 	}
 

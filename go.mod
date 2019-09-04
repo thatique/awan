@@ -12,8 +12,8 @@ require (
 	github.com/go-ini/ini v1.46.0 // indirect
 	github.com/google/go-cmp v0.2.0
 	github.com/minio/minio-go v6.0.14+incompatible
+	github.com/minio/minio-go/v6 v6.0.34
 	github.com/minio/sha256-simd v0.0.0-20190328051042-05b4dd3047e5
-	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0-rc1 // indirect
 	github.com/opencontainers/image-spec v1.0.1 // indirect
 	github.com/opencontainers/runc v0.1.1 // indirect

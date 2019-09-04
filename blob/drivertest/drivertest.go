@@ -7,13 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/thatique/awan/blob"
 	"github.com/thatique/awan/blob/driver"
 	"github.com/thatique/awan/internal/escape"
@@ -64,6 +68,21 @@ func RunConformanceTests(t *testing.T, newHarness HarnessMaker) {
 	})
 	t.Run("TestMetadata", func(t *testing.T) {
 		testMetadata(t, newHarness)
+	})
+	t.Run("TestMD5", func(t *testing.T) {
+		testMD5(t, newHarness)
+	})
+	t.Run("TestCopy", func(t *testing.T) {
+		testCopy(t, newHarness)
+	})
+	t.Run("TestDelete", func(t *testing.T) {
+		testDelete(t, newHarness)
+	})
+	t.Run("TestKeys", func(t *testing.T) {
+		testKeys(t, newHarness)
+	})
+	t.Run("TestSignedURL", func(t *testing.T) {
+		testSignedURL(t, newHarness)
 	})
 }
 
@@ -1418,5 +1437,534 @@ func testMetadata(t *testing.T, newHarness HarnessMaker) {
 				t.Errorf("got\n%v\nwant\n%v\ndiff\n%s", a.Metadata, tc.want, diff)
 			}
 		})
+	}
+}
+
+// testMD5 tests reading MD5 hashes via List and Attributes.
+func testMD5(t *testing.T, newHarness HarnessMaker) {
+	ctx := context.Background()
+
+	// Define two blobs with different content; we'll write them and then verify
+	// their returned MD5 hashes.
+	const aKey, bKey = "blob-for-md5-aaa", "blob-for-md5-bbb"
+	aContent, bContent := []byte("hello"), []byte("goodbye")
+	aMD5 := md5.Sum(aContent)
+	bMD5 := md5.Sum(bContent)
+
+	h, err := newHarness(ctx, t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	drv, err := h.MakeDriver(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := blob.NewBucket(drv)
+	defer b.Close()
+
+	// Write the two blobs.
+	if err := b.WriteAll(ctx, aKey, aContent, nil); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = b.Delete(ctx, aKey) }()
+	if err := b.WriteAll(ctx, bKey, bContent, nil); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = b.Delete(ctx, bKey) }()
+
+	// Check the MD5 we get through Attributes. Note that it's always legal to
+	// return a nil MD5.
+	aAttr, err := b.Attributes(ctx, aKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aAttr.MD5 != nil && !bytes.Equal(aAttr.MD5, aMD5[:]) {
+		t.Errorf("got MD5\n%x\nwant\n%x", aAttr.MD5, aMD5)
+	}
+
+	bAttr, err := b.Attributes(ctx, bKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bAttr.MD5 != nil && !bytes.Equal(bAttr.MD5, bMD5[:]) {
+		t.Errorf("got MD5\n%x\nwant\n%x", bAttr.MD5, bMD5)
+	}
+
+	// Check the MD5 we get through List. Note that it's always legal to
+	// return a nil MD5.
+	iter := b.List(&blob.ListOptions{Prefix: "blob-for-md5-"})
+	obj, err := iter.Next(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obj.Key != aKey {
+		t.Errorf("got name %q want %q", obj.Key, aKey)
+	}
+	if obj.MD5 != nil && !bytes.Equal(obj.MD5, aMD5[:]) {
+		t.Errorf("got MD5\n%x\nwant\n%x", obj.MD5, aMD5)
+	}
+	obj, err = iter.Next(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obj.Key != bKey {
+		t.Errorf("got name %q want %q", obj.Key, bKey)
+	}
+	if obj.MD5 != nil && !bytes.Equal(obj.MD5, bMD5[:]) {
+		t.Errorf("got MD5\n%x\nwant\n%x", obj.MD5, bMD5)
+	}
+}
+
+// testCopy tests the functionality of Copy.
+func testCopy(t *testing.T, newHarness HarnessMaker) {
+	const (
+		srcKey             = "blob-for-copying-src"
+		dstKey             = "blob-for-copying-dest"
+		dstKeyExists       = "blob-for-copying-dest-exists"
+		contentType        = "text/plain"
+		cacheControl       = "no-cache"
+		contentDisposition = "inline"
+		contentEncoding    = "identity"
+		contentLanguage    = "en"
+	)
+	var contents = []byte("Hello World")
+
+	ctx := context.Background()
+	t.Run("NonExistentSourceFails", func(t *testing.T) {
+		h, err := newHarness(ctx, t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h.Close()
+		drv, err := h.MakeDriver(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := blob.NewBucket(drv)
+		defer b.Close()
+
+		err = b.Copy(ctx, dstKey, "does-not-exist", nil)
+		if err == nil {
+			t.Errorf("got nil want error")
+		} else if verr.Code(err) != verr.NotFound {
+			t.Errorf("got %v want NotFound error", err)
+		} else if !strings.Contains(err.Error(), "does-not-exist") {
+			t.Errorf("got %v want error to include missing key", err)
+		}
+	})
+
+	t.Run("Works", func(t *testing.T) {
+		h, err := newHarness(ctx, t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h.Close()
+		drv, err := h.MakeDriver(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := blob.NewBucket(drv)
+		defer b.Close()
+
+		// Create the source blob.
+		wopts := &blob.WriterOptions{
+			ContentType:        contentType,
+			CacheControl:       cacheControl,
+			ContentDisposition: contentDisposition,
+			ContentEncoding:    contentEncoding,
+			ContentLanguage:    contentLanguage,
+			Metadata:           map[string]string{"foo": "bar"},
+		}
+		if err := b.WriteAll(ctx, srcKey, contents, wopts); err != nil {
+			t.Fatal(err)
+		}
+
+		// Grab its attributes to compare to the copy's attributes later.
+		wantAttr, err := b.Attributes(ctx, srcKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantAttr.ModTime = time.Time{} // don't compare this field
+
+		// Create another blob that we're going to overwrite.
+		if err := b.WriteAll(ctx, dstKeyExists, []byte("clobber me"), nil); err != nil {
+			t.Fatal(err)
+		}
+
+		// Copy the source to the destination.
+		if err := b.Copy(ctx, dstKey, srcKey, nil); err != nil {
+			t.Errorf("got unexpected error copying blob: %v", err)
+		}
+		// Read the copy.
+		got, err := b.ReadAll(ctx, dstKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !cmp.Equal(got, contents) {
+			t.Errorf("got %q want %q", string(got), string(contents))
+		}
+		// Verify attributes of the copy.
+		gotAttr, err := b.Attributes(ctx, dstKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotAttr.ModTime = time.Time{} // don't compare this field
+		if diff := cmp.Diff(gotAttr, wantAttr, cmpopts.IgnoreUnexported(blob.Attributes{})); diff != "" {
+			t.Errorf("got %v want %v diff %s", gotAttr, wantAttr, diff)
+		}
+
+		// Copy the source to the second destination, where there's an existing blob.
+		// It should be overwritten.
+		if err := b.Copy(ctx, dstKeyExists, srcKey, nil); err != nil {
+			t.Errorf("got unexpected error copying blob: %v", err)
+		}
+		// Read the copy.
+		got, err = b.ReadAll(ctx, dstKeyExists)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !cmp.Equal(got, contents) {
+			t.Errorf("got %q want %q", string(got), string(contents))
+		}
+		// Verify attributes of the copy.
+		gotAttr, err = b.Attributes(ctx, dstKeyExists)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotAttr.ModTime = time.Time{} // don't compare this field
+		if diff := cmp.Diff(gotAttr, wantAttr, cmpopts.IgnoreUnexported(blob.Attributes{})); diff != "" {
+			t.Errorf("got %v want %v diff %s", gotAttr, wantAttr, diff)
+		}
+	})
+}
+
+// testDelete tests the functionality of Delete.
+func testDelete(t *testing.T, newHarness HarnessMaker) {
+	const key = "blob-for-deleting"
+
+	ctx := context.Background()
+	t.Run("NonExistentFails", func(t *testing.T) {
+		h, err := newHarness(ctx, t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h.Close()
+		drv, err := h.MakeDriver(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := blob.NewBucket(drv)
+		defer b.Close()
+
+		err = b.Delete(ctx, "does-not-exist")
+		if err == nil {
+			t.Errorf("got nil want error")
+		} else if verr.Code(err) != verr.NotFound {
+			t.Errorf("got %v want NotFound error", err)
+		} else if !strings.Contains(err.Error(), "does-not-exist") {
+			t.Errorf("got %v want error to include missing key", err)
+		}
+	})
+
+	t.Run("Works", func(t *testing.T) {
+		h, err := newHarness(ctx, t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h.Close()
+		drv, err := h.MakeDriver(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := blob.NewBucket(drv)
+		defer b.Close()
+
+		// Create the blob.
+		if err := b.WriteAll(ctx, key, []byte("Hello world"), nil); err != nil {
+			t.Fatal(err)
+		}
+		// Delete it.
+		if err := b.Delete(ctx, key); err != nil {
+			t.Errorf("got unexpected error deleting blob: %v", err)
+		}
+		// Subsequent read fails with NotFound.
+		_, err = b.NewReader(ctx, key, nil)
+		if err == nil {
+			t.Errorf("read after delete got nil, want error")
+		} else if verr.Code(err) != verr.NotFound {
+			t.Errorf("read after delete want NotFound error, got %v", err)
+		} else if !strings.Contains(err.Error(), key) {
+			t.Errorf("got %v want error to include missing key", err)
+		}
+		// Subsequent delete also fails.
+		err = b.Delete(ctx, key)
+		if err == nil {
+			t.Errorf("delete after delete got nil, want error")
+		} else if verr.Code(err) != verr.NotFound {
+			t.Errorf("delete after delete got %v, want NotFound error", err)
+		} else if !strings.Contains(err.Error(), key) {
+			t.Errorf("got %v want error to include missing key", err)
+		}
+	})
+}
+
+// testKeys tests a variety of weird keys.
+func testKeys(t *testing.T, newHarness HarnessMaker) {
+	const keyPrefix = "weird-keys"
+	content := []byte("hello")
+	ctx := context.Background()
+
+	t.Run("non-UTF8 fails", func(t *testing.T) {
+		h, err := newHarness(ctx, t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer h.Close()
+		drv, err := h.MakeDriver(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := blob.NewBucket(drv)
+		defer b.Close()
+
+		// Write the blob.
+		key := keyPrefix + escape.NonUTF8String
+		if err := b.WriteAll(ctx, key, content, nil); err == nil {
+			t.Error("got nil error, expected error for using non-UTF8 string as key")
+		}
+	})
+
+	for description, key := range escape.WeirdStrings {
+		t.Run(description, func(t *testing.T) {
+			h, err := newHarness(ctx, t)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer h.Close()
+			drv, err := h.MakeDriver(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b := blob.NewBucket(drv)
+			defer b.Close()
+
+			// Write the blob.
+			key = keyPrefix + key
+			if err := b.WriteAll(ctx, key, content, nil); err != nil {
+				t.Fatal(err)
+			}
+
+			defer func() {
+				err := b.Delete(ctx, key)
+				if err != nil {
+					t.Error(err)
+				}
+			}()
+
+			// Verify read works.
+			got, err := b.ReadAll(ctx, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !cmp.Equal(got, content) {
+				t.Errorf("got %q want %q", string(got), string(content))
+			}
+
+			// Verify Attributes works.
+			_, err = b.Attributes(ctx, key)
+			if err != nil {
+				t.Error(err)
+			}
+
+			// Verify SignedURL works.
+			url, err := b.SignedURL(ctx, key, nil)
+			if verr.Code(err) != verr.Unimplemented {
+				if err != nil {
+					t.Error(err)
+				}
+				client := h.HTTPClient()
+				if client == nil {
+					t.Error("can't verify SignedURL, Harness.HTTPClient() returned nil")
+				}
+				resp, err := client.Get(url)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode != 200 {
+					t.Errorf("got status code %d, want 200", resp.StatusCode)
+				}
+				got, err := ioutil.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(got, content) {
+					t.Errorf("got body %q, want %q", string(got), string(content))
+				}
+			}
+		})
+	}
+}
+
+// testSignedURL tests the functionality of SignedURL.
+func testSignedURL(t *testing.T, newHarness HarnessMaker) {
+	const key = "blob-for-signing"
+	const contents = "hello world"
+
+	ctx := context.Background()
+
+	h, err := newHarness(ctx, t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+
+	drv, err := h.MakeDriver(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := blob.NewBucket(drv)
+	defer b.Close()
+
+	// Verify that a negative Expiry gives an error. This is enforced in the
+	// portable type, so works regardless of driver support.
+	_, err = b.SignedURL(ctx, key, &blob.SignedURLOptions{Expiry: -1 * time.Minute})
+	if err == nil {
+		t.Error("got nil error, expected error for negative SignedURLOptions.Expiry")
+	}
+
+	// Generate real signed URLs for GET, GET with the query params remvoed, PUT, and DELETE.
+	getURL, err := b.SignedURL(ctx, key, nil)
+	if err != nil {
+		if verr.Code(err) == verr.Unimplemented {
+			t.Skipf("SignedURL not supported")
+			return
+		}
+		t.Fatal(err)
+	} else if getURL == "" {
+		t.Fatal("got empty GET url")
+	}
+	// Copy getURL, but remove all query params. This URL should not be allowed
+	// to GET since the client is unauthorized.
+	getURLNoParamsURL, err := url.Parse(getURL)
+	if err != nil {
+		t.Fatalf("failed to parse getURL: %v", err)
+	}
+	getURLNoParamsURL.RawQuery = ""
+	getURLNoParams := getURLNoParamsURL.String()
+	putURL, err := b.SignedURL(ctx, key, &blob.SignedURLOptions{Method: http.MethodPut})
+	if err != nil {
+		t.Fatal(err)
+	} else if putURL == "" {
+		t.Fatal("got empty PUT url")
+	}
+	deleteURL, err := b.SignedURL(ctx, key, &blob.SignedURLOptions{Method: http.MethodDelete})
+	if err != nil {
+		t.Fatal(err)
+	} else if deleteURL == "" {
+		t.Fatal("got empty DELETE url")
+	}
+
+	client := h.HTTPClient()
+	if client == nil {
+		t.Fatal("can't verify SignedURL, Harness.HTTPClient() returned nil")
+	}
+
+	// PUT the blob. Try with all URLs, only putURL should work.
+	for _, test := range []struct {
+		urlMethod   string
+		url         string
+		wantSuccess bool
+	}{
+		{http.MethodGet, getURL, false},
+		{http.MethodDelete, deleteURL, false},
+		{http.MethodPut, putURL, true},
+	} {
+		req, err := http.NewRequest(http.MethodPut, test.url, strings.NewReader(contents))
+		if err != nil {
+			t.Fatalf("failed to create PUT HTTP request using %s URL: %v", test.urlMethod, err)
+		}
+		if resp, err := client.Do(req); err != nil {
+			t.Fatalf("PUT failed with %s URL: %v", test.urlMethod, err)
+		} else {
+			defer resp.Body.Close()
+			success := resp.StatusCode >= 200 && resp.StatusCode < 300
+			if success != test.wantSuccess {
+				t.Errorf("PUT with %s URL got status code %d, want 2xx? %v", test.urlMethod, resp.StatusCode, test.wantSuccess)
+				gotBody, _ := ioutil.ReadAll(resp.Body)
+				t.Errorf(string(gotBody))
+			}
+		}
+	}
+
+	// GET it. Try with all URLs, only getURL should work.
+	for _, test := range []struct {
+		urlMethod   string
+		url         string
+		wantSuccess bool
+	}{
+		{http.MethodDelete, deleteURL, false},
+		{http.MethodPut, putURL, false},
+		{http.MethodGet, getURLNoParams, false},
+		{http.MethodGet, getURL, true},
+	} {
+		if resp, err := client.Get(test.url); err != nil {
+			t.Fatalf("GET with %s URL failed: %v", test.urlMethod, err)
+		} else {
+			defer resp.Body.Close()
+			success := resp.StatusCode >= 200 && resp.StatusCode < 300
+			if success != test.wantSuccess {
+				t.Errorf("GET with %s URL got status code %d, want 2xx? %v", test.urlMethod, resp.StatusCode, test.wantSuccess)
+				gotBody, _ := ioutil.ReadAll(resp.Body)
+				t.Errorf(string(gotBody))
+			} else if success {
+				gotBody, err := ioutil.ReadAll(resp.Body)
+				if err != nil {
+					t.Errorf("GET with %s URL failed to read response body: %v", test.urlMethod, err)
+				} else if gotBodyStr := string(gotBody); gotBodyStr != contents {
+					t.Errorf("GET with %s URL got body %q, want %q", test.urlMethod, gotBodyStr, contents)
+				}
+			}
+		}
+	}
+
+	// DELETE it. Try with all URLs, only deleteURL should work.
+	for _, test := range []struct {
+		urlMethod   string
+		url         string
+		wantSuccess bool
+	}{
+		{http.MethodGet, getURL, false},
+		{http.MethodPut, putURL, false},
+		{http.MethodDelete, deleteURL, true},
+	} {
+		req, err := http.NewRequest(http.MethodDelete, test.url, nil)
+		if err != nil {
+			t.Fatalf("failed to create DELETE HTTP request using %s URL: %v", test.urlMethod, err)
+		}
+		if resp, err := client.Do(req); err != nil {
+			t.Fatalf("DELETE with %s URL failed: %v", test.urlMethod, err)
+		} else {
+			defer resp.Body.Close()
+			success := resp.StatusCode >= 200 && resp.StatusCode < 300
+			if success != test.wantSuccess {
+				t.Fatalf("DELETE with %s URL got status code %d, want 2xx? %v", test.urlMethod, resp.StatusCode, test.wantSuccess)
+				gotBody, _ := ioutil.ReadAll(resp.Body)
+				t.Errorf(string(gotBody))
+			}
+		}
+	}
+
+	// GET should fail now that the blob has been deleted.
+	if resp, err := client.Get(getURL); err != nil {
+		t.Errorf("GET after DELETE failed: %v", err)
+	} else {
+		defer resp.Body.Close()
+		if resp.StatusCode != 404 {
+			t.Errorf("GET after DELETE got status code %d, want 404", resp.StatusCode)
+			gotBody, _ := ioutil.ReadAll(resp.Body)
+			t.Errorf(string(gotBody))
+		}
 	}
 }
