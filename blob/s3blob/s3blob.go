@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -14,12 +15,20 @@ import (
 	"sync"
 
 	"github.com/minio/minio-go/v6"
+	"github.com/thatique/awan/blob"
 	"github.com/thatique/awan/blob/driver"
 	"github.com/thatique/awan/internal/escape"
 	"github.com/thatique/awan/verr"
 )
 
-const defaultPageSize = 1000
+const (
+	defaultPageSize = 1000
+	Scheme = "s3"
+)
+
+func init() {
+	blob.DefaultURLMux().RegisterBucket(Scheme, new(lazyCredsOpener))
+}
 
 type lazyCredsOpener struct {
 	init   sync.Once
@@ -30,15 +39,15 @@ type lazyCredsOpener struct {
 func (o *lazyCredsOpener) OpenBucketURL(ctx context.Context, u *url.URL) (*blob.Bucket, error) {
 	o.init.Do(func() {
 		// take the credentials from env
-		accessKey := os.GetEnv("AWS_S3_ACCESS_KEY")
+		accessKey := os.Getenv("AWS_S3_ACCESS_KEY")
 		if accessKey == "" {
 			o.err = errors.New("s3blob: environment variable AWS_S3_ACCESS_KEY not set")
 		}
-		secretKey := os.GetEnv("AWS_S3_SECRET_KEY")
+		secretKey := os.Getenv("AWS_S3_SECRET_KEY")
 		if secretKey == "" {
 			o.err = errors.New("s3blob: environment variable AWS_S3_SECRET_KEY not set")
 		}
-		o.URLOpener = &URLOpener{
+		o.opener = &URLOpener{
 			AccessKey: accessKey,
 			SecretKey: secretKey,
 		}
@@ -52,34 +61,6 @@ func (o *lazyCredsOpener) OpenBucketURL(ctx context.Context, u *url.URL) (*blob.
 type URLOpener struct {
 	AccessKey, SecretKey string
 	Options              Options
-}
-
-func (o *URLOpener) OpenBucketURL(ctx context.Context, u *url.URL) (*blob.Bucket, error) {
-	q := u.Query()
-
-	useSSL := false
-	if i, err := strconv.Atoi(q.Get("ssl")); err != nil && i > 0 {
-		useSSL = true
-	}
-	client, err := minio.New(u.Host, o.AccessKey, o.SecretKey, useSSL)
-	if err != nil {
-		return nil, fmt.Errorf("open bucket %v: %v", u, err)
-	}
-	options := &u.Options{}
-	if i, err := strconv.Atoi(q.Get("legacylist")); err != nil && i > 0 {
-		options.UseLegacyList = true
-	}
-	bucketName := u.Path
-	i := 0
-	e := -1
-	if bucketName[0] == '/' {
-		i += 1
-	}
-	if bucketName[len(bucketName)-1] == '/' {
-		e -= 1
-	}
-	bucketName = bucketName[i:e]
-	return OpenBucket(ctx, client, bucketName, options)
 }
 
 // Options sets options for constructing a *blob.Bucket backed by s3.
@@ -96,10 +77,38 @@ type bucket struct {
 	useLegacyList bool
 }
 
+func (o *URLOpener) OpenBucketURL(ctx context.Context, u *url.URL) (*blob.Bucket, error) {
+	q := u.Query()
+
+	useSSL := false
+	if i, err := strconv.Atoi(q.Get("ssl")); err != nil && i > 0 {
+		useSSL = true
+	}
+	client, err := minio.New(u.Host, o.AccessKey, o.SecretKey, useSSL)
+	if err != nil {
+		return nil, fmt.Errorf("open bucket %v: %v", u, err)
+	}
+	options := &Options{}
+	if i, err := strconv.Atoi(q.Get("legacylist")); err != nil && i > 0 {
+		options.UseLegacyList = true
+	}
+	bucketName := u.Path
+	i := 0
+	e := -1
+	if bucketName[0] == '/' {
+		i += 1
+	}
+	if bucketName[len(bucketName)-1] == '/' {
+		e -= 1
+	}
+	bucketName = bucketName[i:e]
+	return OpenBucket(ctx, client, bucketName, options)
+}
+
 // OpenBucket returns a *blob.Bucket backed by S3.
 // See the package documentation for an example.
 func OpenBucket(ctx context.Context, client *minio.Client, bucketName string, opts *Options) (*blob.Bucket, error) {
-	drv, err := openBucket(ctx, sess, bucketName, opts)
+	drv, err := openBucket(ctx, client, bucketName, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -116,11 +125,11 @@ func openBucket(ctx context.Context, client *minio.Client, bucketName string, op
 	if opts == nil {
 		opts = &Options{}
 	}
-	return &bucket{name: bucketName, client: client, core: &minio.Core{client}, useLegacyList: opts.UseLegacyList}
+	return &bucket{name: bucketName, client: client, core: &minio.Core{client}, useLegacyList: opts.UseLegacyList}, nil
 }
 
 type reader struct {
-	body  io.ReadCloser
+	body     io.ReadCloser
 	attrs driver.ReaderAttributes
 }
 
@@ -187,7 +196,7 @@ func (w *writer) open(pr *io.PipeReader) error {
 		if err != nil {
 			w.err = err
 			if pr != nil {
-				pr.closeWithError(err)
+				pr.CloseWithError(err)
 			}
 			return
 		}
@@ -214,24 +223,28 @@ func (b *bucket) Close() error {
 }
 
 func (b *bucket) ErrorCode(err error) verr.ErrorCode {
-	reserr, ok := err.(minio.ErrorResponse)
-	if !ok {
-		return verr.Unknown
+	reserr := minio.ToErrorResponse(err)
+	switch reserr.Code {
+	case "AccessDenied":
+		return verr.PermissionDenied
+	case "NoSuchKey", "NoSuchUpload", "NoSuchBucketPolicy", "NoSuchBucket", "NotFound":
+		return verr.NotFound
+	case "BadDigest", "EntityTooSmall", "EntityTooLarge":
+		return verr.InvalidArgument
+	case "InternalError":
+		return verr.Internal
+	default:
 	}
 	switch reserr.StatusCode {
 	case http.StatusNotFound:
 		return verr.NotFound
-	case http.StatusForbidden, http.StatusUnauthorized:
-		return verr.PermissionDenied
-	case http.StatusMethodNotAllowed:
-		return verr.InvalidArgument
 	default:
 		return verr.Unknown
 	}
 }
 
 func (b *bucket) Attributes(ctx context.Context, key string) (*driver.Attributes, error) {
-	key = escapeKey(key)
+	key = escapeKey(key, false)
 	info, err := b.client.StatObject(b.name, key, minio.StatObjectOptions{})
 	if err != nil {
 		return nil, err
@@ -252,19 +265,25 @@ func (b *bucket) Attributes(ctx context.Context, key string) (*driver.Attributes
 }
 
 func (b *bucket) ListPaged(ctx context.Context, opts *driver.ListOptions) (*driver.ListPage, error) {
+	prefix := ""
 	if opts.Prefix != "" {
-		opts.Prefix = escapeKey(opts.Prefix)
+		prefix = escapeKey(opts.Prefix, true)
 	}
+	delimiter := ""
 	if opts.Delimiter != "" {
-		opts.Delimiter = escapeKey(opts.Delimiter)
+		delimiter = escapeKey(opts.Delimiter, true)
 	}
-	resp, err := b.listObjects(ctx, opts)
+	pageSize := opts.PageSize
+	if pageSize == 0 {
+		pageSize = defaultPageSize
+	}
+	res, err := b.listObjects(ctx, prefix, string(opts.PageToken), delimiter, pageSize)
 	if err != nil {
 		return nil, err
 	}
 	page := driver.ListPage{}
-	if res.ContinuationToken != "" {
-		page.NextPageToken = []byte(*resp.NextContinuationToken)
+	if res.NextContinuationToken != "" {
+		page.NextPageToken = []byte(res.NextContinuationToken)
 	}
 	if n := len(res.Contents) + len(res.CommonPrefixes); n > 0 {
 		page.Objects = make([]*driver.ListObject, n)
@@ -273,17 +292,17 @@ func (b *bucket) ListPaged(ctx context.Context, opts *driver.ListOptions) (*driv
 				Key:     unescapeKey(obj.Key),
 				ModTime: obj.LastModified,
 				Size:    obj.Size,
-				MD5:     eTagToMD5(obj.ETag),
+				MD5:     eTagToMD5(&obj.ETag),
 				ETag:    obj.ETag,
 			}
 		}
 		for i, prefix := range res.CommonPrefixes {
-			page.Objects[i+len(resp.Contents)] = &driver.ListObject{
+			page.Objects[i+len(res.Contents)] = &driver.ListObject{
 				Key:   unescapeKey(prefix.Prefix),
 				IsDir: true,
 			}
 		}
-		if len(resp.Contents) > 0 && len(resp.CommonPrefixes) > 0 {
+		if len(res.Contents) > 0 && len(res.CommonPrefixes) > 0 {
 			// S3 gives us blobs and "directories" in separate lists; sort them.
 			sort.Slice(page.Objects, func(i, j int) bool {
 				return page.Objects[i].Key < page.Objects[j].Key
@@ -293,16 +312,12 @@ func (b *bucket) ListPaged(ctx context.Context, opts *driver.ListOptions) (*driv
 	return &page, nil
 }
 
-func (b *bucket) listObjects(ctx context.Context, opts *driver.ListOptions) (minio.ListBucketV2Result, error) {
-	pageSize := opts.PageSize
-	if pageSize == 0 {
-		pageSize = defaultPageSize
-	}
+func (b *bucket) listObjects(ctx context.Context, prefix, token, delimiter string, pageSize int) (minio.ListBucketV2Result, error) {
 	if !b.useLegacyList {
-		return b.core.ListObjectsV2(b.name, opts.Prefix, string(opts.PageToken), true, opts.Delimiter, pageSize, "")
+		return b.core.ListObjectsV2(b.name, prefix, token, true, delimiter, pageSize, "")
 	}
 
-	res, err := b.core.ListObjects(b.name, opts.Prefix, string(opts.PageToken), opts.Delimiter, pageSize)
+	res, err := b.core.ListObjects(b.name, prefix, token, delimiter, pageSize)
 	if err != nil {
 		return minio.ListBucketV2Result{}, err
 	}
@@ -312,7 +327,7 @@ func (b *bucket) listObjects(ctx context.Context, opts *driver.ListOptions) (min
 	} else if res.IsTruncated {
 		nextContinuationToken = res.Contents[len(res.Contents)-1].Key
 	}
-	return minio.ListObjectsV2{
+	return minio.ListBucketV2Result{
 		CommonPrefixes:        res.CommonPrefixes,
 		Contents:              res.Contents,
 		NextContinuationToken: nextContinuationToken,
@@ -320,20 +335,27 @@ func (b *bucket) listObjects(ctx context.Context, opts *driver.ListOptions) (min
 }
 
 func (b *bucket) NewRangeReader(ctx context.Context, key string, offset, length int64, opts *driver.ReaderOptions) (driver.Reader, error) {
-	key = escapeKey(key)
+	key = escapeKey(key, false)
 	objectOptions := minio.GetObjectOptions{}
-	objectOptions.SetRange(offset, len)
+	if offset > 0 && length < 0 {
+		objectOptions.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+	} else if length == 0 {
+		// AWS doesn't support a zero-length read; we'll read 1 byte and then
+		// ignore it in favor of http.NoBody below.
+		objectOptions.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset))
+	} else if length >= 0 {
+		objectOptions.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
+	}
 
-	obj, err := b.GetObjectWithContext(ctx, b.name, key, objectOptions)
+	rc, info, err := b.core.GetObjectWithContext(ctx, b.name, key, objectOptions)
 	if err != nil {
 		return nil, err
 	}
-	info, err := obj.Stat()
-	if err != nil {
-		return nil, err
+	if length == 0 {
+		rc = http.NoBody
 	}
 	return &reader{
-		body: obj,
+		body: rc,
 		attrs: driver.ReaderAttributes{
 			ContentType: info.ContentType,
 			ModTime:     info.LastModified,
@@ -343,8 +365,8 @@ func (b *bucket) NewRangeReader(ctx context.Context, key string, offset, length 
 }
 
 func (b *bucket) NewTypedWriter(ctx context.Context, key, contentType string, opts *driver.WriterOptions) (driver.Writer, error) {
-	key = escapeKey(key)
-	md := make(map[string]*string, len(opts.Metadata))
+	key = escapeKey(key, false)
+	md := make(map[string]string, len(opts.Metadata))
 	for k, v := range opts.Metadata {
 		// See the package comments for more details on escaping of metadata
 		// keys & values.
@@ -382,9 +404,9 @@ func (b *bucket) NewTypedWriter(ctx context.Context, key, contentType string, op
 }
 
 func (b *bucket) Copy(ctx context.Context, dstKey, srcKey string, opts *driver.CopyOptions) error {
-	dstKey = escapeKey(dstKey)
-	srcKey = escapeKey(srcKey)
-	srcInfo := minio.NewSourceInfo(b.name, srcKey)
+	dstKey = escapeKey(dstKey, false)
+	srcKey = escapeKey(srcKey, false)
+	srcInfo := minio.NewSourceInfo(b.name, srcKey, nil)
 	dstInfo, err := minio.NewDestinationInfo(b.name, dstKey, nil, nil)
 	if err != nil {
 		return err
@@ -397,12 +419,12 @@ func (b *bucket) Delete(ctx context.Context, key string) error {
 	if _, err := b.Attributes(ctx, key); err != nil {
 		return err
 	}
-	key = escapeKey(key)
+	key = escapeKey(key, false)
 	return b.client.RemoveObject(b.name, key)
 }
 
 func (b *bucket) SignedURL(ctx context.Context, key string, opts *driver.SignedURLOptions) (string, error) {
-	key = escapeKey(key)
+	key = escapeKey(key, false)
 	url, err := b.client.Presign(opts.Method, b.name, key, opts.Expiry, nil)
 	if err != nil {
 		return "", err
@@ -411,12 +433,18 @@ func (b *bucket) SignedURL(ctx context.Context, key string, opts *driver.SignedU
 }
 
 // escapeKey does all required escaping for UTF-8 strings to work with S3.
-func escapeKey(key string) string {
+func escapeKey(key string, isPrefix bool) string {
 	return escape.HexEscape(key, func(r []rune, i int) bool {
 		c := r[i]
 		switch {
 		// S3 doesn't handle these characters (determined via experimentation).
 		case c < 32:
+			return true
+		// these chars supported by S3 but Minio didn't support it well, so escape them
+		case c == '\n' || c == '^' || c == '*' || c == '|' || c == '\\' || c == '"':
+			return true
+		// Escape the trailing slash in a key, Minio didn't like that
+		case !isPrefix && c == '/' && i == len(r)-1:
 			return true
 		// For "../", escape the trailing slash.
 		case i > 1 && c == '/' && r[i-1] == '.' && r[i-2] == '.':
@@ -448,12 +476,21 @@ func extractMetadata(h http.Header) (objectAttr, map[string]string) {
 		"Content-Encoding",
 		"Content-Language",
 	}
+	filtered := filterHeader(h, keys)
+	metadata := make(map[string]string, len(filtered))
+	for k, _ := range filtered {
+		if strings.HasPrefix(k, "X-Amz-Meta-") {
+			mk := strings.TrimPrefix(k, "X-Amz-Meta-")
+			metadata[escape.HexUnescape(escape.URLUnescape(mk))] = escape.URLUnescape(filtered.Get(k))
+		}
+	}
+
 	return objectAttr{
 		cacheControl:       h.Get("Cache-Control"),
 		contentDisposition: h.Get("Content-Disposition"),
 		contentEncoding:    h.Get("Content-Encoding"),
 		contentLanguage:    h.Get("Content-Language"),
-	}, filterHeader(h, keys)
+	}, metadata
 }
 
 // make a copy of http.Header

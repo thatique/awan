@@ -20,5 +20,7 @@ require (
 	github.com/ory/dockertest v3.3.4+incompatible
 	go.opencensus.io v0.20.2
 	go.uber.org/atomic v1.3.2
-	golang.org/x/xerrors v0.0.0-20190410155217-1f06c39b4373
+	golang.org/x/xerrors v0.0.0-20190528162220-0421b64034aa
 )
+
+go 1.13
