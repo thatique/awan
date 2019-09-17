@@ -1586,6 +1586,7 @@ func testCopy(t *testing.T, newHarness HarnessMaker) {
 			t.Fatal(err)
 		}
 		wantAttr.ModTime = time.Time{} // don't compare this field
+		wantAttr.ETag = ""
 
 		// Create another blob that we're going to overwrite.
 		if err := b.WriteAll(ctx, dstKeyExists, []byte("clobber me"), nil); err != nil {
@@ -1610,6 +1611,7 @@ func testCopy(t *testing.T, newHarness HarnessMaker) {
 			t.Fatal(err)
 		}
 		gotAttr.ModTime = time.Time{} // don't compare this field
+		gotAttr.ETag = ""
 		if diff := cmp.Diff(gotAttr, wantAttr, cmpopts.IgnoreUnexported(blob.Attributes{})); diff != "" {
 			t.Errorf("got %v want %v diff %s", gotAttr, wantAttr, diff)
 		}
@@ -1633,6 +1635,7 @@ func testCopy(t *testing.T, newHarness HarnessMaker) {
 			t.Fatal(err)
 		}
 		gotAttr.ModTime = time.Time{} // don't compare this field
+		gotAttr.ETag = ""
 		if diff := cmp.Diff(gotAttr, wantAttr, cmpopts.IgnoreUnexported(blob.Attributes{})); diff != "" {
 			t.Errorf("got %v want %v diff %s", gotAttr, wantAttr, diff)
 		}

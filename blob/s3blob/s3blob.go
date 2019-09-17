@@ -23,7 +23,7 @@ import (
 
 const (
 	defaultPageSize = 1000
-	Scheme = "s3"
+	Scheme          = "s3"
 )
 
 func init() {
@@ -129,7 +129,7 @@ func openBucket(ctx context.Context, client *minio.Client, bucketName string, op
 }
 
 type reader struct {
-	body     io.ReadCloser
+	body  io.ReadCloser
 	attrs driver.ReaderAttributes
 }
 
@@ -224,19 +224,10 @@ func (b *bucket) Close() error {
 
 func (b *bucket) ErrorCode(err error) verr.ErrorCode {
 	reserr := minio.ToErrorResponse(err)
-	switch reserr.Code {
-	case "AccessDenied":
+	switch {
+	case reserr.Code == "AccessDenied":
 		return verr.PermissionDenied
-	case "NoSuchKey", "NoSuchUpload", "NoSuchBucketPolicy", "NoSuchBucket", "NotFound":
-		return verr.NotFound
-	case "BadDigest", "EntityTooSmall", "EntityTooLarge":
-		return verr.InvalidArgument
-	case "InternalError":
-		return verr.Internal
-	default:
-	}
-	switch reserr.StatusCode {
-	case http.StatusNotFound:
+	case reserr.Code == "NoSuchKey" || reserr.Code == "NotFound":
 		return verr.NotFound
 	default:
 		return verr.Unknown

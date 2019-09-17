@@ -31,7 +31,8 @@ type Reader struct {
 	b        driver.Bucket
 	r        driver.Reader
 	end      func(error) // called at Close to finish trace and metric collection
-	provider string      // for metric collection
+	key      string
+	provider string // for metric collection
 	closed   bool
 }
 
@@ -40,13 +41,13 @@ func (r *Reader) Read(p []byte) (int, error) {
 	stats.RecordWithTags(context.Background(), []tag.Mutator{tag.Upsert(trace.ProviderKey, r.provider)},
 		bytesReadMeasure.M(int64(n)))
 
-	return n, wrapError(r.b, err)
+	return n, wrapError(r.b, err, r.key)
 }
 
 // Close implements io.Closer (https://golang.org/pkg/io/#Closer).
 func (r *Reader) Close() error {
 	r.closed = true
-	err := wrapError(r.b, r.r.Close())
+	err := wrapError(r.b, r.r.Close(), r.key)
 	r.end(err)
 	return err
 }
@@ -187,12 +188,12 @@ func (w *Writer) Close() (err error) {
 
 	defer w.cancel()
 	if w.w != nil {
-		return wrapError(w.b, w.w.Close())
+		return wrapError(w.b, w.w.Close(), w.key)
 	}
 	if _, err := w.open(w.buf.Bytes()); err != nil {
 		return err
 	}
-	return wrapError(w.b, w.w.Close())
+	return wrapError(w.b, w.w.Close(), w.key)
 }
 
 // open tries to detect the MIME type of p and write it to the blob.
@@ -201,7 +202,7 @@ func (w *Writer) open(p []byte) (int, error) {
 	ct := http.DetectContentType(p)
 	var err error
 	if w.w, err = w.b.NewTypedWriter(w.ctx, w.key, ct, w.opts); err != nil {
-		return 0, wrapError(w.b, err)
+		return 0, wrapError(w.b, err, w.key)
 	}
 	w.buf = nil
 	w.ctx = nil
@@ -214,7 +215,7 @@ func (w *Writer) write(p []byte) (int, error) {
 	n, err := w.w.Write(p)
 	stats.RecordWithTags(context.Background(), []tag.Mutator{tag.Upsert(trace.ProviderKey, w.provider)},
 		bytesWrittenMeasure.M(int64(n)))
-	return n, wrapError(w.b, err)
+	return n, wrapError(w.b, err, w.key)
 }
 
 // ListOptions sets options for listing blobs via Bucket.List.
@@ -301,7 +302,7 @@ func (i *ListIterator) Next(ctx context.Context) (*ObjectInfo, error) {
 	// Loading a new page.
 	p, err := i.b.b.ListPaged(ctx, i.opts)
 	if err != nil {
-		return nil, wrapError(i.b.b, err)
+		return nil, wrapError(i.b.b, err, "")
 	}
 	i.page = p
 	i.nextIdx = 0
@@ -427,20 +428,20 @@ func (b *Bucket) Exists(ctx context.Context, key string) (bool, error) {
 // gcerrors.Code will return gcerrors.NotFound.
 func (b *Bucket) Attributes(ctx context.Context, key string) (_ *Attributes, err error) {
 	if !utf8.ValidString(key) {
-		return &Attributes{}, verr.Newf(verr.InvalidArgument, nil, "blob: Attributes key must be a valid UTF-8 string: %q", key)
+		return nil, verr.Newf(verr.InvalidArgument, nil, "blob: Attributes key must be a valid UTF-8 string: %q", key)
 	}
 
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	if b.closed {
-		return &Attributes{}, errClosed
+		return nil, errClosed
 	}
 	ctx = b.tracer.Start(ctx, "Attributes")
 	defer func() { b.tracer.End(ctx, err) }()
 
 	a, err := b.b.Attributes(ctx, key)
 	if err != nil {
-		return &Attributes{}, wrapError(b.b, err)
+		return nil, wrapError(b.b, err, key)
 	}
 	var md map[string]string
 	if len(a.Metadata) > 0 {
@@ -513,10 +514,10 @@ func (b *Bucket) newRangeReader(ctx context.Context, key string, offset, length 
 	}()
 	dr, err := b.b.NewRangeReader(ctx, key, offset, length, dopts)
 	if err != nil {
-		return nil, wrapError(b.b, err)
+		return nil, wrapError(b.b, err, key)
 	}
 	end := func(err error) { b.tracer.End(tctx, err) }
-	r := &Reader{b: b.b, r: dr, end: end, provider: b.tracer.Provider}
+	r := &Reader{b: b.b, r: dr, end: end, provider: b.tracer.Provider, key: key}
 	_, file, lineno, ok := runtime.Caller(2)
 	runtime.SetFinalizer(r, func(r *Reader) {
 		if !r.closed {
@@ -642,7 +643,7 @@ func (b *Bucket) NewWriter(ctx context.Context, key string, opts *WriterOptions)
 		dw, err := b.b.NewTypedWriter(ctx, key, ct, dopts)
 		if err != nil {
 			cancel()
-			return nil, wrapError(b.b, err)
+			return nil, wrapError(b.b, err, key)
 		}
 		w.w = dw
 	} else {
@@ -688,7 +689,7 @@ func (b *Bucket) Copy(ctx context.Context, dstKey, srcKey string, opts *CopyOpti
 	}
 	ctx = b.tracer.Start(ctx, "Copy")
 	defer func() { b.tracer.End(ctx, err) }()
-	return wrapError(b.b, b.b.Copy(ctx, dstKey, srcKey, dopts))
+	return wrapError(b.b, b.b.Copy(ctx, dstKey, srcKey, dopts), fmt.Sprintf("%s -> %s", srcKey, dstKey))
 }
 
 // Delete deletes the blob stored at key.
@@ -706,7 +707,7 @@ func (b *Bucket) Delete(ctx context.Context, key string) (err error) {
 	}
 	ctx = b.tracer.Start(ctx, "Delete")
 	defer func() { b.tracer.End(ctx, err) }()
-	return wrapError(b.b, b.b.Delete(ctx, key))
+	return wrapError(b.b, b.b.Delete(ctx, key), key)
 }
 
 // SignedURL returns a URL that can be used to GET the blob for the duration
@@ -751,7 +752,7 @@ func (b *Bucket) SignedURL(ctx context.Context, key string, opts *SignedURLOptio
 		return "", errClosed
 	}
 	url, err := b.b.SignedURL(ctx, key, &dopts)
-	return url, wrapError(b.b, err)
+	return url, wrapError(b.b, err, key)
 }
 
 // Close releases any resources used for the bucket.
@@ -837,12 +838,28 @@ type WriterOptions struct {
 	Metadata map[string]string
 }
 
-func wrapError(b driver.Bucket, err error) error {
+func wrapError(b driver.Bucket, err error, key string) error {
 	if err == nil {
 		return nil
 	}
 	if verr.DoNotWrap(err) {
 		return err
 	}
-	return verr.New(b.ErrorCode(err), err, 2, "blob")
+	msg := "blob"
+	if key != "" {
+		msg += fmt.Sprintf(" (key %q)", key)
+	}
+	return verr.New(b.ErrorCode(err), err, 2, msg)
+}
+
+// PrefixedBucket returns a *Bucket based on b with all keys modified to have
+// prefix, which will usually end with a "/" to target a subdirectory in the
+// bucket.
+//
+// bucket will be closed and no longer usable after this function returns.
+func PrefixedBucket(bucket *Bucket, prefix string) *Bucket {
+	bucket.mu.Lock()
+	defer bucket.mu.Unlock()
+	bucket.closed = true
+	return NewBucket(driver.NewPrefixedBucket(bucket.b, prefix))
 }

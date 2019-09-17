@@ -27,8 +27,8 @@ const (
 
 type harness struct {
 	c      *minio.Client
-	opts    *Options
-	closer  func()
+	opts   *Options
+	closer func()
 }
 
 func newHarness(ctx context.Context, host string, t *testing.T) (drivertest.Harness, error) {
@@ -39,7 +39,7 @@ func newHarness(ctx context.Context, host string, t *testing.T) (drivertest.Harn
 	return &harness{c: c, opts: nil}, nil
 }
 
-func newHarnessUsingLegacyList(ctx context.Context, host string,  t *testing.T) (drivertest.Harness, error) {
+func newHarnessUsingLegacyList(ctx context.Context, host string, t *testing.T) (drivertest.Harness, error) {
 	c, err := minio.New(host, minioAccessKey, minioSecretKey, false)
 	if err != nil {
 		return nil, err
@@ -86,7 +86,7 @@ func TestEscapeKey(t *testing.T) {
 		if !isValidObjectName(s) {
 			t.Fatalf("%s is not valid object name", s)
 		}
-		s2 :=  unescapeKey(s)
+		s2 := unescapeKey(s)
 		if s2 != k {
 			t.Fatalf("can't reverse escaped string. original: %s, unescaped result: %s", k, s2)
 		}
@@ -114,16 +114,16 @@ func prepareMinioServer() (func(), string) {
 		log.Fatal(err)
 	}
 	options := &dockertest.RunOptions{
-	    Repository: "minio/minio",
-	    Tag:        "latest",
-	    Cmd:        []string{"server", "/data"},
-	    PortBindings: map[dc.Port][]dc.PortBinding{
-	        "9000": []dc.PortBinding{{HostPort: "9000"}},
-	    },
-	    Env: []string{
-	    	fmt.Sprintf("MINIO_ACCESS_KEY=%s", minioAccessKey),
-	    	fmt.Sprintf("MINIO_SECRET_KEY=%s", minioSecretKey),
-	    },
+		Repository: "minio/minio",
+		Tag:        "latest",
+		Cmd:        []string{"server", "/data"},
+		PortBindings: map[dc.Port][]dc.PortBinding{
+			"9000": []dc.PortBinding{{HostPort: "9000"}},
+		},
+		Env: []string{
+			fmt.Sprintf("MINIO_ACCESS_KEY=%s", minioAccessKey),
+			fmt.Sprintf("MINIO_SECRET_KEY=%s", minioSecretKey),
+		},
 	}
 	resource, err := pool.RunWithOptions(options)
 	if err != nil {
