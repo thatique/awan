@@ -34,12 +34,13 @@ func (f *fileFinder) Get(name string) (string, error) {
 
 // AssetFinder implements Finder
 type assetFinder struct {
-	assets func(string) ([]byte, error)
+	basePath string
+	assets   func(string) ([]byte, error)
 }
 
 // Get returns template string
 func (a *assetFinder) Get(name string) (string, error) {
-	assetPath := path.Join("assets/templates", filepath.FromSlash(path.Clean("/"+name)))
+	assetPath := path.Join(a.basePath, filepath.FromSlash(path.Clean("/"+name)))
 	if len(assetPath) > 0 && assetPath[0] == '/' {
 		assetPath = assetPath[1:]
 	}
@@ -67,8 +68,8 @@ func NewFileFactory(basePath string, funcs template.FuncMap) *Factory {
 }
 
 // NewAssetFactory returns new Factory backed with asset finder
-func NewAssetFactory(assets func(string) ([]byte, error), funcs template.FuncMap) *Factory {
-	return NewFactory(&assetFinder{assets: assets}, funcs)
+func NewAssetFactory(basePath string, assets func(string) ([]byte, error), funcs template.FuncMap) *Factory {
+	return NewFactory(&assetFinder{assets: assets, basePath: basePath}, funcs)
 }
 
 // NewFactory returns new Factory
