@@ -13,8 +13,9 @@ type M map[string]interface{}
 
 // Finder provides to get template string based their name
 type Finder interface {
-	// Get returns template string
-	Get(name string) (string, error)
+	// Find finds a template based the given name, returns template string
+	// if success otherwise returns empty string and non-nil error
+	Find(name string) (string, error)
 }
 
 // FileFinder implements Finder that search template in file system
@@ -23,7 +24,7 @@ type fileFinder struct {
 }
 
 // Get returns template string
-func (f *fileFinder) Get(name string) (string, error) {
+func (f *fileFinder) Find(name string) (string, error) {
 	assetPath := path.Join(f.basePath, filepath.FromSlash(path.Clean("/"+name)))
 	b, err := ioutil.ReadFile(assetPath)
 	if err != nil {
@@ -39,7 +40,7 @@ type assetFinder struct {
 }
 
 // Get returns template string
-func (a *assetFinder) Get(name string) (string, error) {
+func (a *assetFinder) Find(name string) (string, error) {
 	assetPath := path.Join(a.basePath, filepath.FromSlash(path.Clean("/"+name)))
 	if len(assetPath) > 0 && assetPath[0] == '/' {
 		assetPath = assetPath[1:]
@@ -121,7 +122,7 @@ func (f *Factory) createTemplate(t *template.Template, name string) *Template {
 }
 
 func (f *Factory) parse(tpl *template.Template, name string) (*template.Template, error) {
-	s, err := f.finder.Get(name)
+	s, err := f.finder.Find(name)
 	if err != nil {
 		return nil, err
 	}
