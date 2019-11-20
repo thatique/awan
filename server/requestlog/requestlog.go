@@ -25,7 +25,7 @@ type Handler struct {
 
 // NewHandler returns a handler that emits information to log and calls
 // h.ServeHTTP.
-func NewHandler(log logger, h http.Handler) *Handler {
+func NewHandler(log Logger, h http.Handler) *Handler {
 	return &Handler{log: log, h: h}
 }
 
@@ -54,14 +54,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	r2 := new(http.Request)
 	*r2 = *r
-	rcc = &readCounterClose{r: r.Body}
+	rcc := &readCounterCloser{r: r.Body}
 	r2.Body = rcc
 	w2 := &responseStats{w: w}
 
 	h.h.ServeHTTP(w2, r2)
 
 	ent.Latency = time.Since(start)
-	if rcc.err == nill && rcc.r != nil {
+	if rcc.err == nil && rcc.r != nil {
 		// if the handler hasn't encountered an error in the Body (like EOF),
 		// the consume the rest of the Body to provide an accurate rcc.n.
 		io.Copy(ioutil.Discard, rcc)

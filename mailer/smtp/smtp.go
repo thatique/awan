@@ -136,6 +136,10 @@ func (t *smtpTransport) send(from string, to []string, msg driver.WriterTo) (err
 		return err
 	}
 
+	if err = w.Close(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
