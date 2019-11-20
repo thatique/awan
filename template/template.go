@@ -143,10 +143,16 @@ func (t *Template) With(key string, value interface{}) {
 
 // Execute applies a parsed template to the specified data object, writing the output to w
 func (t *Template) Execute(w io.Writer, data M) error {
+	final := M{}
 	for k, v := range t.data {
-		data[k] = v
+		final[k] = v
 	}
-	return t.tpl.Execute(w, data)
+	if data != nil {
+		for k, v := range data {
+			final[k] = v
+		}
+	}
+	return t.tpl.Execute(w, final)
 }
 
 // GetName returns the name of Template
