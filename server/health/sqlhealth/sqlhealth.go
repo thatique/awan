@@ -59,6 +59,7 @@ func New(db *sql.DB) *Checker {
 	return c
 }
 
+// CheckHealth implements health checker
 func (c *Checker) CheckHealth() error {
 	select {
 	case <-c.stopped:
@@ -71,6 +72,7 @@ func (c *Checker) CheckHealth() error {
 	}
 }
 
+// Stop stop the health checker
 func (c *Checker) Stop() {
 	c.cancel()
 	<-c.stopped

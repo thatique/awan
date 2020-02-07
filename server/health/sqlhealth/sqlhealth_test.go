@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"gocloud.dev/server/health"
+	"github.com/thatique/awan/server/health"
 )
 
 var _ = health.Checker((*Checker)(nil))
