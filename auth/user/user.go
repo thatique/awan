@@ -26,7 +26,7 @@ type Info interface {
 type DefaultInfo struct {
 	Name     string
 	UID      string
-	Groups   string
+	Groups   []string
 	Metadata map[string][]string
 }
 
@@ -42,7 +42,7 @@ func (i *DefaultInfo) GetGroups() []string {
 	return i.Groups
 }
 
-func (u *DefaultInfo) GetMetadata() map[string][]string {
+func (i *DefaultInfo) GetMetadata() map[string][]string {
 	return i.Metadata
 }
 
