@@ -10,6 +10,7 @@ require (
 	github.com/docker/go-units v0.4.0 // indirect
 	github.com/emersion/go-message v0.9.2
 	github.com/emersion/go-textwrapper v0.0.0-20160606182133-d0e65e56babe // indirect
+	github.com/google/go-cmp v0.3.0
 	github.com/gotestyourself/gotestyourself v2.2.0+incompatible // indirect
 	github.com/lib/pq v1.1.1 // indirect
 	github.com/minio/minio-go v6.0.14+incompatible
