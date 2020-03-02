@@ -10,16 +10,20 @@ type Storage interface {
 	// Get the session for the given session ID. Returns nil if it not exists
 	// rather than returning error
 	Get(ctx context.Context, id string) (*Session, error)
+
 	// Delete the session with given session ID. Does not do anything if the session
 	// is not found.
 	Delete(ctx context.Context, id string) error
+
 	// Delete all sessions of the given auth ID. Does not do anything if there
 	// are no sessions of the given auth ID.
-	DeleteAllOfAuthId(ctx context.Context, authID string) error
+	DeleteAllOfAuthID(ctx context.Context, authID string) error
+
 	// Insert a new session. return 'SessionAlreadyExists' error when there already
 	// exists a session with the same session ID. We only call this method after
 	// generating a fresh session ID
 	Insert(ctx context.Context, sess *Session) error
+
 	// Replace the contents of a session. Return 'SessionDoesNotExist' if
 	// there is no session with the given  session ID
 	Replace(ctx context.Context, sess *Session) error

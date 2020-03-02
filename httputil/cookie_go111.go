@@ -1,4 +1,4 @@
-// +build !go1.11
+// +build go1.11
 
 package httputil
 
@@ -11,6 +11,7 @@ var DefaultCookieOptions = &CookieOptions{
 	Path:     "/",
 	Secure:   false,
 	HTTPOnly: true,
+	SameSite: http.SameSiteDefaultMode,
 }
 
 // NewCookieFromOptions create http.Cookie
@@ -23,5 +24,6 @@ func NewCookieFromOptions(name, value string, maxAge int, options *CookieOptions
 		MaxAge:   maxAge,
 		Secure:   options.Secure,
 		HttpOnly: options.HTTPOnly,
+		SameSite: options.SameSite,
 	}
 }

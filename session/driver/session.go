@@ -20,9 +20,20 @@ type Session struct {
 	AccessedAt time.Time
 }
 
+// NewSession create new session
+func NewSession(id, authID string, now time.Time) *Session {
+	return &Session{
+		ID:         id,
+		AuthID:     authID,
+		Values:     make(map[interface{}]interface{}),
+		CreatedAt:  now,
+		AccessedAt: now,
+	}
+}
+
 // Equal return true if two session equal
 func (sess *Session) Equal(other *Session) bool {
-	return sess.ID == other.ID && sess.AuthID == other.ID && cmp.Diff(sess.Values, other.Values) == ""
+	return sess.ID == other.ID && sess.AuthID == other.AuthID && cmp.Diff(sess.Values, other.Values) == ""
 }
 
 // ExpireAt return session's expiration time with the given idle and absolute timeout
