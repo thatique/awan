@@ -2,9 +2,8 @@ package session
 
 import (
 	"context"
-	"encoding/base32"
+	"encoding/base64"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/gorilla/securecookie"
@@ -182,9 +181,7 @@ func (ss *ServerSessionState) saveSessionOnDb(ctx context.Context, now time.Time
 	}
 
 	if sess == nil {
-		id := strings.TrimRight(
-			base32.StdEncoding.EncodeToString(
-				securecookie.GenerateRandomKey(32)), "=")
+		id := GenerateSessionID()
 		sess = driver.NewSession(id, dec.authID, now)
 		sess.Values = dec.decomposed
 
@@ -234,4 +231,10 @@ func recomposeSession(authKey, authID string, sess map[interface{}]interface{}) 
 		sess[authKey] = authID
 	}
 	return sess
+}
+
+// Generate session ID securely
+func GenerateSessionID() string {
+	return base64.URLEncoding.EncodeToString(
+		securecookie.GenerateRandomKey(18))
 }

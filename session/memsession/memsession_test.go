@@ -7,7 +7,13 @@ import (
 
 	"github.com/thatique/awan/session"
 	"github.com/thatique/awan/session/driver"
+	"github.com/thatique/awan/session/drivertest"
 )
+
+func TestConformance(t *testing.T) {
+	st := &storage{sessions: map[string]*driver.Session{}}
+	drivertest.RunConformanceTests(t, st)
+}
 
 func TestLoadSession(t *testing.T) {
 	sess := driver.NewSession("123456789-123456789-123456789-12", "auth-id", time.Now().UTC())
