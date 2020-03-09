@@ -38,7 +38,8 @@ const (
 )
 
 const (
-	forceInvalidateKey = "_forceinvalidate_"
+	// ForceInvalidateKey is the key used to set session invalidation mode
+	ForceInvalidateKey = "_forceinvalidate_"
 )
 
 // ServerSessionState hold some state in order to work, this struct hold all info
@@ -214,8 +215,8 @@ func decomposeSession(authKey string, sess map[interface{}]interface{}) *decompo
 		delete(sess, authKey)
 		authID = v.(string)
 	}
-	if v, ok := sess[forceInvalidateKey]; ok {
-		delete(sess, forceInvalidateKey)
+	if v, ok := sess[ForceInvalidateKey]; ok {
+		delete(sess, ForceInvalidateKey)
 		force = v.(ForceInvalidate)
 	}
 
@@ -233,7 +234,7 @@ func recomposeSession(authKey, authID string, sess map[interface{}]interface{}) 
 	return sess
 }
 
-// Generate session ID securely
+// GenerateSessionID securely
 func GenerateSessionID() string {
 	return base64.URLEncoding.EncodeToString(
 		securecookie.GenerateRandomKey(18))
