@@ -59,12 +59,17 @@ type storage struct {
 	idleTimeout, absoluteTimeout int
 }
 
-func NewServerSessionState(pool *redis.Pool, keyPairs [][]byte, options ...Options) (*session.ServerSessionState, error) {
+// NewServerSessionState create new server session backed by redis
+func NewServerSessionState(pool *redis.Pool, keyPairs [][]byte, options ...Option) (*session.ServerSessionState, error) {
 	rs := &storage{
 		pool:            pool,
+		serializer:      driver.GobSerializer,
 		defaultExpire:   604800,  // 7 days
 		idleTimeout:     604800,  // 7 days
 		absoluteTimeout: 5184000, // 60 days
+	}
+	for _, option := range options {
+		option(rs)
 	}
 	_, err := rs.ping()
 	return session.NewServerSessionState(rs, keyPairs...), err
@@ -110,9 +115,7 @@ func (rs *storage) Delete(ctx context.Context, id string) error {
 	}
 
 	conn.Send("MULTI")
-	if err = conn.Send("DEL", key); err != nil {
-		return err
-	}
+	conn.Send("DEL", key)
 	if authID != "" {
 		if err = conn.Send("SREM", rs.authKey(authID), key); err != nil {
 			return err
@@ -161,13 +164,18 @@ func (rs *storage) Insert(ctx context.Context, sess *driver.Session) error {
 		return err
 	}
 
-	args := redis.Args{}.Add(key).Add(rs.authKey(sess.AuthID))
-	args = args.Add(rs.getExpire(sess)).AddFlat(sh)
-	_, err = insertScript.Do(conn, args...)
-	if err != nil {
-		return err
+	conn.Send("MULTI")
+	// HMSET
+	conn.Send("HMSET", redis.Args{}.Add(key).AddFlat(sh)...)
+	conn.Send("EXPIRE", key, rs.getExpire(sess))
+
+	authKey := rs.authKey(sess.AuthID)
+	if authKey != "" {
+		conn.Send("SADD", authKey, key)
 	}
-	return nil
+
+	_, err = conn.Do("EXEC")
+	return err
 }
 
 func (rs *storage) Replace(ctx context.Context, sess *driver.Session) error {
@@ -178,16 +186,37 @@ func (rs *storage) Replace(ctx context.Context, sess *driver.Session) error {
 	defer conn.Close()
 
 	key := rs.prefix + sess.ID
-	exist, err := redis.Bool(conn.Do("EXISTS", key, "AuthID"))
+	oldAuthID, err := redis.String(conn.Do("HGET", key, "AuthID"))
 	if err != nil {
 		if err == redis.ErrNil {
-			return driver.SessionDoesNotExist{ID: sess.ID}
+			return nil
 		}
 		return err
 	}
-	if !exist {
-		return driver.SessionAlreadyExists{ID: sess.ID}
+
+	sh, err := newSessionHashFrom(sess, rs.serializer)
+	if err != nil {
+		return err
 	}
+
+	conn.Send("MULTI")
+	// HMSET
+	conn.Send("HMSET", redis.Args{}.Add(key).AddFlat(sh)...)
+	conn.Send("EXPIRE", key, rs.getExpire(sess))
+
+	authID := rs.authKey(sess.AuthID)
+	if authID != oldAuthID {
+		if oldAuthID != "" {
+			conn.Send("SREM", oldAuthID, key)
+		}
+
+		if authID != "" {
+			conn.Send("SADD", authID, key)
+		}
+	}
+
+	_, err = conn.Do("EXEC")
+	return err
 }
 
 func (rs *storage) authKey(authID string) string {
