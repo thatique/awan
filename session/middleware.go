@@ -41,32 +41,30 @@ func GetSession(r *http.Request) (map[interface{}]interface{}, error) {
 }
 
 // Middleware provides session to the wrapped http handler
-func Middleware(ss *ServerSessionState) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			sid := ""
-			if c, err := r.Cookie(ss.cookieName); err == nil {
-				err = securecookie.DecodeMulti(ss.cookieName, c.Value, &sid, ss.Codecs...)
-				if err != nil {
-					sid = ""
-				}
-			}
-
-			data, token, err := ss.Load(r.Context(), sid)
+func Middleware(ss *ServerSessionState, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sid := ""
+		if c, err := r.Cookie(ss.cookieName); err == nil {
+			err = securecookie.DecodeMulti(ss.cookieName, c.Value, &sid, ss.Codecs...)
 			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
+				sid = ""
 			}
+		}
 
-			nw := newSessionResponseWriter(w, token)
-			nw.data = data
-			nw.ss = ss
+		data, token, err := ss.Load(r.Context(), sid)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 
-			nr := r.WithContext(context.WithValue(r.Context(), sessionContextKey{}, data))
+		nw := newSessionResponseWriter(w, token)
+		nw.data = data
+		nw.ss = ss
 
-			next.ServeHTTP(nw, nr)
-		})
-	}
+		nr := r.WithContext(context.WithValue(r.Context(), sessionContextKey{}, data))
+
+		next.ServeHTTP(nw, nr)
+	})
 }
 
 func (w *sessionResponseWriter) WriteHeader(code int) {
