@@ -11,20 +11,16 @@ require (
 	github.com/emersion/go-message v0.9.2
 	github.com/emersion/go-textwrapper v0.0.0-20160606182133-d0e65e56babe // indirect
 	github.com/gomodule/redigo v2.0.0+incompatible
-	github.com/google/go-cmp v0.3.0
+	github.com/google/go-cmp v0.3.1
 	github.com/gorilla/securecookie v1.1.1
 	github.com/gotestyourself/gotestyourself v2.2.0+incompatible // indirect
-	github.com/lib/pq v1.1.1 // indirect
+	github.com/minio/minio v0.0.0-20200328045259-2c3e34f001d0
 	github.com/minio/minio-go v6.0.14+incompatible
 	github.com/opencontainers/go-digest v1.0.0-rc1 // indirect
 	github.com/opencontainers/image-spec v1.0.1 // indirect
 	github.com/opencontainers/runc v0.1.1 // indirect
 	github.com/ory/dockertest v3.3.4+incompatible
-	github.com/sirupsen/logrus v1.4.2 // indirect
-	github.com/stretchr/testify v1.3.0 // indirect
 	go.opencensus.io v0.22.0
-	golang.org/x/net v0.0.0-20190619014844-b5b0513f8c1b // indirect
-	golang.org/x/sys v0.0.0-20190620070143-6f217b454f45 // indirect
 	golang.org/x/xerrors v0.0.0-20190717185122-a985d3407aa7
 	gotest.tools v2.2.0+incompatible // indirect
 )

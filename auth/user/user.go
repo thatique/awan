@@ -18,7 +18,7 @@ type Info interface {
 	// thought was interesting. One example would be scopes on a token.
 	// Keys in this map should be namespaced to the authenticator or
 	// authenticator/authorizer pair making use of them.
-	GetMetadata() map[string][]string
+	GetMetadata() map[string]string
 }
 
 // DefaultInfo provides a simple user information exchange object for components
@@ -27,22 +27,27 @@ type DefaultInfo struct {
 	Name     string
 	UID      string
 	Groups   []string
-	Metadata map[string][]string
+	Metadata map[string]string
 }
 
+// GetUsername return a username
 func (i *DefaultInfo) GetUsername() string {
 	return i.Name
 }
 
+// GetUID return User ID of this user
 func (i *DefaultInfo) GetUID() string {
 	return i.UID
 }
 
+// GetGroups return all groups this user belongs to
 func (i *DefaultInfo) GetGroups() []string {
 	return i.Groups
 }
 
-func (i *DefaultInfo) GetMetadata() map[string][]string {
+// GetMetadata returns metadata for this user's info, this usually
+// filled by authenticator
+func (i *DefaultInfo) GetMetadata() map[string]string {
 	return i.Metadata
 }
 

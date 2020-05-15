@@ -117,9 +117,7 @@ func (rs *storage) Delete(ctx context.Context, id string) error {
 	conn.Send("MULTI")
 	conn.Send("DEL", key)
 	if authID != "" {
-		if err = conn.Send("SREM", rs.authKey(authID), key); err != nil {
-			return err
-		}
+		conn.Send("SREM", rs.authKey(authID), key)
 	}
 
 	_, err = conn.Do("EXEC")
@@ -310,26 +308,3 @@ func (sh *sessionHash) toSession(id string, serializer driver.Serializer) (*driv
 
 	return sess, nil
 }
-
-// Lua script for inserting session
-//
-// KEYS[1] - session's ID
-// KEYS[2] - Auth key
-// ARGV[1] - Expiration in seconds
-// ARGV... - Session Data
-var insertScript = redis.NewScript(2, `
-	-- now insert session data
-	local sessions = {}
-	for i = 2, #ARGV, 1 do
-		sessions[#sessions + 1] = ARGV[i]
-	end
-	redis.call('HMSET', KEYS[1], unpack(sessions))
-	-- expire if needed
-	if(ARGV[1] ~= '') then
-		redis.call('EXPIRE', KEYS[1], ARGV[1])
-	end
-	if(KEYS[2] ~= '') then
-		redis.call('SADD', KEYS[2], KEYS[1])
-	end
-	return true
-`)
