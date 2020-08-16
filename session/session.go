@@ -144,7 +144,7 @@ func (ss *ServerSessionState) invalidateIfNeeded(ctx context.Context, session *d
 	)
 
 	if session != nil && session.AuthID != "" {
-		authID = sess.AuthID
+		authID = session.AuthID
 	}
 
 	invalidateCurrent := decomposed.forceInvalidation != DontForceInvalidate || decomposed.authID != authID
