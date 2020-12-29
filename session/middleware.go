@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"github.com/gorilla/securecookie"
@@ -24,20 +23,6 @@ func newSessionResponseWriter(w http.ResponseWriter, token *SaveSessionToken) *s
 		ResponseWriter: w,
 		token:          token,
 	}
-}
-
-type sessionContextKey struct{}
-
-// GetSession get data associated for this request. Make sure call this function after
-// `Middleware` run.
-func GetSession(r *http.Request) (map[interface{}]interface{}, error) {
-	var ctx = r.Context()
-	data := ctx.Value(sessionContextKey{})
-	if data != nil {
-		return data.(map[interface{}]interface{}), nil
-	}
-
-	return nil, errors.New("sersan: no session data found in request, perhaps you didn't use Sersan's middleware?")
 }
 
 // Middleware provides session to the wrapped http handler
