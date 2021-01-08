@@ -15,12 +15,14 @@ type Args struct {
 	Action Action
 	// The resources being acted upon
 	Resource string
+	// The object
+	Object string
 
 	// is the current user owner of this resource
 	IsOwner bool
 
-	// the specific metadata
-	Metadata map[string]string
+	// the condition values
+	ConditionValues map[string][]string
 }
 
 // Authorizer authorize based on Args

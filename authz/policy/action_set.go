@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/minio/minio-go/pkg/set"
+	"github.com/minio/minio-go/v7/pkg/set"
 	"github.com/minio/minio/pkg/wildcard"
 	"github.com/thatique/awan/authz/authorizer"
 )

@@ -3,30 +3,46 @@ package policy
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/thatique/awan/authz/authorizer"
+	"github.com/thatique/awan/authz/policy/condition"
 )
 
 // Statement contains information about a single permission
 type Statement struct {
-	SID       string      `json:"SID,omitempty"`
-	Effect    Effect      `json:"Effect"`
-	Actions   ActionSet   `json:"Action"`
-	Resources ResourceSet `json:"Resource,omitempty"`
+	SID        string              `json:"SID,omitempty"`
+	Principal  Principal           `json:"Principal"`
+	Effect     Effect              `json:"Effect"`
+	Actions    ActionSet           `json:"Action"`
+	Resources  ResourceSet         `json:"Resource,omitempty"`
+	Conditions condition.Functions `json:"Condition,omitempty"`
 }
 
 // IsAllowed check if this statement allowed
 func (statement Statement) IsAllowed(args authorizer.Args) bool {
 	check := func() bool {
+		if !statement.Principal.Match(args.User.GetUsername()) {
+			return false
+		}
 		if !statement.Actions.Match(args.Action) {
 			return false
 		}
 
-		if !statement.Resources.Match(args.Resource) {
+		resource := args.Resource
+		if args.Object != "" {
+			if !strings.HasPrefix(args.Resource, "/") {
+				resource += "/"
+			}
+
+			resource += args.Object
+		}
+
+		if !statement.Resources.Match(resource, args.ConditionValues) {
 			return false
 		}
 
-		return true
+		return statement.Conditions.Evaluate(args.ConditionValues)
 	}
 
 	return statement.Effect.IsAllowed(check())
@@ -82,10 +98,13 @@ func (statement *Statement) UnmarshalJSON(data []byte) error {
 }
 
 // NewStatement - creates new statement.
-func NewStatement(effect Effect, actionSet ActionSet, resourceSet ResourceSet) Statement {
+// NewStatement - creates new statement.
+func NewStatement(effect Effect, principal Principal, actionSet ActionSet, resourceSet ResourceSet, conditions condition.Functions) Statement {
 	return Statement{
-		Effect:    effect,
-		Actions:   actionSet,
-		Resources: resourceSet,
+		Effect:     effect,
+		Principal:  principal,
+		Actions:    actionSet,
+		Resources:  resourceSet,
+		Conditions: conditions,
 	}
 }

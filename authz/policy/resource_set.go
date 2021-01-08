@@ -6,22 +6,21 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/minio/minio-go/pkg/set"
-	"github.com/minio/minio/pkg/wildcard"
+	"github.com/minio/minio-go/v7/pkg/set"
 )
 
 // ResourceSet set of resources in policy statement.
-type ResourceSet map[string]struct{}
+type ResourceSet map[Resource]struct{}
 
 // Add a resource to ResourceSet
-func (resourceSet ResourceSet) Add(resource string) {
+func (resourceSet ResourceSet) Add(resource Resource) {
 	resourceSet[resource] = struct{}{}
 }
 
 // Match - matches object name with anyone of action pattern in action set.
-func (resourceSet ResourceSet) Match(resource string) bool {
+func (resourceSet ResourceSet) Match(resource string, conditionValues map[string][]string) bool {
 	for r := range resourceSet {
-		if wildcard.Match(string(r), string(resource)) {
+		if r.Match(resource, conditionValues) {
 			return true
 		}
 	}
@@ -44,7 +43,7 @@ func (resourceSet ResourceSet) Intersection(sset ResourceSet) ResourceSet {
 func (resourceSet ResourceSet) String() string {
 	resources := []string{}
 	for resource := range resourceSet {
-		resources = append(resources, string(resource))
+		resources = append(resources, resource.String())
 	}
 	sort.Strings(resources)
 
@@ -57,7 +56,7 @@ func (resourceSet ResourceSet) MarshalJSON() ([]byte, error) {
 		return nil, errors.New("empty resource set")
 	}
 
-	resources := []string{}
+	resources := []Resource{}
 	for resource := range resourceSet {
 		resources = append(resources, resource)
 	}
@@ -74,14 +73,23 @@ func (resourceSet *ResourceSet) UnmarshalJSON(data []byte) error {
 
 	*resourceSet = make(ResourceSet)
 	for _, s := range sset.ToSlice() {
-		resourceSet.Add(s)
+		resource, err := parseResource(s)
+		if err != nil {
+			return err
+		}
+
+		if _, found := (*resourceSet)[resource]; found {
+			return fmt.Errorf("duplicate resource '%v' found", s)
+		}
+
+		resourceSet.Add(resource)
 	}
 
 	return nil
 }
 
 // NewResourceSet - creates new action set.
-func NewResourceSet(resources ...string) ResourceSet {
+func NewResourceSet(resources ...Resource) ResourceSet {
 	resourceSet := make(ResourceSet)
 	for _, resource := range resources {
 		resourceSet.Add(resource)
